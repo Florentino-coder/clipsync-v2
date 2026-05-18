@@ -4,8 +4,10 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:ui';
 
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -14,6 +16,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 // - ws://YOUR_VPS_IP:8765
 // - wss://clipsync-relay.onrender.com
 const kRelayUrl = 'wss://clipsync-relay.onrender.com';
+const kAppVersion = '0.4.0+4';
 
 void initForegroundTask() {
   FlutterForegroundTask.init(
@@ -35,6 +38,8 @@ void initForegroundTask() {
 
 @pragma('vm:entry-point')
 void taskEntryPoint() {
+  DartPluginRegistrant.ensureInitialized();
+  WidgetsFlutterBinding.ensureInitialized();
   FlutterForegroundTask.setTaskHandler(ClipTaskHandler());
 }
 
@@ -63,10 +68,11 @@ class ClipTaskHandler extends TaskHandler {
 
   @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
-    _targetId = (await FlutterForegroundTask.getData<String>(key: 'target_id') ??
-            '')
-        .replaceAll('-', '');
+    _targetId =
+        (await FlutterForegroundTask.getData<String>(key: 'target_id') ?? '')
+            .replaceAll('-', '');
     _alive = true;
+    _sendDebug('service start target=${fmtId(_targetId)}');
     _connect();
   }
 
@@ -75,10 +81,13 @@ class ClipTaskHandler extends TaskHandler {
 
     try {
       await _ws?.close();
-      _ws =
-          await WebSocket.connect(kRelayUrl).timeout(const Duration(seconds: 10));
+      _sendDebug('service connecting $kRelayUrl');
+      _ws = await WebSocket.connect(
+        kRelayUrl,
+      ).timeout(const Duration(seconds: 10));
 
       _ws!.add(jsonEncode({'action': 'subscribe', 'target': _targetId}));
+      _sendDebug('service subscribe sent ${fmtId(_targetId)}');
 
       _ws!.listen(
         (data) async {
@@ -92,23 +101,29 @@ class ClipTaskHandler extends TaskHandler {
                 _setNotification(
                   online ? 'PC online - ready' : 'Waiting for PC...',
                 );
-                FlutterForegroundTask.sendDataToMain(
-                  {'type': 'status', 'online': online},
-                );
+                FlutterForegroundTask.sendDataToMain({
+                  'type': 'status',
+                  'online': online,
+                });
+                _sendDebug('service subscribed online=$online');
                 break;
 
               case 'pc_online':
                 _setNotification('PC online - ready');
-                FlutterForegroundTask.sendDataToMain(
-                  {'type': 'status', 'online': true},
-                );
+                FlutterForegroundTask.sendDataToMain({
+                  'type': 'status',
+                  'online': true,
+                });
+                _sendDebug('service pc_online');
                 break;
 
               case 'pc_offline':
                 _setNotification('PC offline');
-                FlutterForegroundTask.sendDataToMain(
-                  {'type': 'status', 'online': false},
-                );
+                FlutterForegroundTask.sendDataToMain({
+                  'type': 'status',
+                  'online': false,
+                });
+                _sendDebug('service pc_offline');
                 break;
 
               case 'clip':
@@ -116,24 +131,36 @@ class ClipTaskHandler extends TaskHandler {
                 if (text.isEmpty) break;
 
                 await Clipboard.setData(ClipboardData(text: text));
+                _sendDebug('service copied len=${text.length}');
 
-                FlutterForegroundTask.sendDataToMain(
-                  {'type': 'clip', 'text': text},
-                );
+                FlutterForegroundTask.sendDataToMain({
+                  'type': 'clip',
+                  'text': text,
+                });
 
-                final preview =
-                    text.length > 45 ? '${text.substring(0, 45)}...' : text;
+                final preview = text.length > 45
+                    ? '${text.substring(0, 45)}...'
+                    : text;
                 _setNotification('Clipboard: $preview');
                 break;
             }
-          } catch (_) {}
+          } catch (e) {
+            _sendDebug('service message error: $e');
+          }
         },
-        onDone: _retry,
-        onError: (_) => _retry(),
+        onDone: () {
+          _sendDebug('service socket done');
+          _retry();
+        },
+        onError: (e) {
+          _sendDebug('service socket error: $e');
+          _retry();
+        },
         cancelOnError: true,
       );
-    } catch (_) {
+    } catch (e) {
       _setNotification('Connecting...');
+      _sendDebug('service connect error: $e');
       _retry();
     }
   }
@@ -149,6 +176,14 @@ class ClipTaskHandler extends TaskHandler {
       notificationTitle: 'ClipSync',
       notificationText: text,
     );
+  }
+
+  void _sendDebug(String message) {
+    FlutterForegroundTask.sendDataToMain({
+      'type': 'debug',
+      'message': message,
+      'at': DateTime.now().toIso8601String(),
+    });
   }
 
   @override
