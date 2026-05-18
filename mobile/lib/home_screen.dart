@@ -1,9 +1,5 @@
 // lib/home_screen.dart
 
-import 'dart:async';
-import 'dart:convert';
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
@@ -20,14 +16,13 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final _ctrl = TextEditingController();
+  final List<String> _events = [];
   bool _running = false;
   bool _pcOnline = false;
+  bool _showDiagnostics = false;
   String _lastClip = '';
   String _status = 'Not connected';
   String _targetId = '';
-  WebSocket? _uiWs;
-  Timer? _uiRetryTimer;
-  final List<String> _debugLines = [];
 
   @override
   void initState() {
@@ -39,8 +34,6 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     FlutterForegroundTask.removeTaskDataCallback(_onData);
-    _uiRetryTimer?.cancel();
-    _uiWs?.close();
     _ctrl.dispose();
     super.dispose();
   }
@@ -51,38 +44,40 @@ class _HomeScreenState extends State<HomeScreen> {
     final running = await FlutterForegroundTask.isRunningService;
     setState(() {
       _ctrl.text = fmtId(saved);
-      _running = running;
       _targetId = saved.replaceAll('-', '');
+      _running = running;
       if (running && saved.isNotEmpty) {
-        _status = 'Running - PC: ${fmtId(saved)}';
+        _status = 'Sync running';
       }
     });
     if (running && saved.isNotEmpty) {
-      _addDebug('app restored target=${fmtId(saved)}');
-      _connectUiSocket(_targetId);
+      _addEvent('Restored ${fmtId(saved)}');
     }
   }
 
   void _onData(Object data) {
     if (data is! Map) return;
     final msg = Map<String, dynamic>.from(data);
-    _addDebug(
-      'service ${msg['type']}: ${msg['message'] ?? msg['online'] ?? ''}',
-    );
-    if (msg['type'] == 'clip') {
+    final type = msg['type'] as String? ?? '';
+
+    if (type == 'clip') {
+      final text = msg['text'] as String? ?? '';
       setState(() {
         _pcOnline = true;
-        _lastClip = msg['text'] as String? ?? '';
+        _lastClip = text;
         _status = 'Clipboard received';
       });
-    } else if (msg['type'] == 'status') {
+      _addEvent('Clipboard ${text.length} chars');
+    } else if (type == 'status') {
       final online = msg['online'] == true;
       setState(() {
         _pcOnline = online;
-        _status = online ? 'PC online - ready' : 'Waiting for PC...';
+        _status = online ? 'PC online - ready' : 'Waiting for PC';
       });
-    } else if (msg['type'] == 'debug') {
-      setState(() {});
+      _addEvent(online ? 'PC online' : 'PC offline');
+    } else if (type == 'debug') {
+      final message = msg['message'] as String? ?? '';
+      if (message.isNotEmpty) _addEvent(message);
     }
   }
 
@@ -119,7 +114,7 @@ class _HomeScreenState extends State<HomeScreen> {
     await p.setString('target_id', raw);
     await FlutterForegroundTask.saveData(key: 'target_id', value: raw);
     _targetId = raw;
-    _addDebug('start target=${fmtId(raw)} relay=$kRelayUrl');
+    _addEvent('Start ${fmtId(raw)}');
 
     await FlutterForegroundTask.requestNotificationPermission();
     if (!await FlutterForegroundTask.isIgnoringBatteryOptimizations) {
@@ -131,22 +126,18 @@ class _HomeScreenState extends State<HomeScreen> {
       notificationText: 'Connecting...',
       callback: taskEntryPoint,
     );
-    _addDebug('service start result=$result');
+    _addEvent('Service $result');
 
     setState(() {
       _running = true;
       _pcOnline = false;
       _status = 'Connecting...';
     });
-    _connectUiSocket(raw);
   }
 
   Future<void> _stop() async {
     await FlutterForegroundTask.stopService();
-    _uiRetryTimer?.cancel();
-    await _uiWs?.close();
-    _uiWs = null;
-    _addDebug('stopped');
+    _addEvent('Stopped');
     setState(() {
       _running = false;
       _pcOnline = false;
@@ -154,99 +145,18 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  Future<void> _connectUiSocket(String targetId) async {
-    if (targetId.isEmpty) return;
-
-    _uiRetryTimer?.cancel();
-    await _uiWs?.close();
-    _addDebug('ui connecting');
-
-    try {
-      final ws = await WebSocket.connect(
-        kRelayUrl,
-      ).timeout(const Duration(seconds: 10));
-      _uiWs = ws;
-      ws.add(jsonEncode({'action': 'subscribe', 'target': targetId}));
-      _addDebug('ui subscribe sent ${fmtId(targetId)}');
-
-      ws.listen(
-        (data) async {
-          try {
-            final msg = jsonDecode(data as String) as Map<String, dynamic>;
-            final type = (msg['type'] ?? msg['status']) as String? ?? '';
-            _addDebug('ui recv $type');
-
-            if (type == 'subscribed') {
-              final online = msg['online'] as bool? ?? false;
-              if (!mounted) return;
-              setState(() {
-                _pcOnline = online;
-                _status = online ? 'PC online - ready' : 'Waiting for PC...';
-              });
-            } else if (type == 'pc_online') {
-              if (!mounted) return;
-              setState(() {
-                _pcOnline = true;
-                _status = 'PC online - ready';
-              });
-            } else if (type == 'pc_offline') {
-              if (!mounted) return;
-              setState(() {
-                _pcOnline = false;
-                _status = 'PC offline';
-              });
-            } else if (type == 'clip') {
-              final text = msg['text'] as String? ?? '';
-              if (text.isEmpty) return;
-              await Clipboard.setData(ClipboardData(text: text));
-              if (!mounted) return;
-              setState(() {
-                _pcOnline = true;
-                _lastClip = text;
-                _status = 'Clipboard received';
-              });
-              _addDebug('ui copied len=${text.length}');
-            }
-          } catch (e) {
-            _addDebug('ui message error: $e');
-          }
-        },
-        onDone: () {
-          _addDebug('ui socket done');
-          _scheduleUiReconnect();
-        },
-        onError: (Object e) {
-          _addDebug('ui socket error: $e');
-          _scheduleUiReconnect();
-        },
-        cancelOnError: true,
-      );
-    } catch (e) {
-      _addDebug('ui connect error: $e');
-      _scheduleUiReconnect();
-    }
-  }
-
-  void _scheduleUiReconnect() {
-    if (!_running || _targetId.isEmpty) return;
-    _uiRetryTimer?.cancel();
-    _uiRetryTimer = Timer(const Duration(seconds: 5), () {
-      _connectUiSocket(_targetId);
-    });
-  }
-
-  void _addDebug(String line) {
+  void _addEvent(String line) {
     final now = DateTime.now();
     final stamp =
         '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}';
     if (!mounted) {
-      _debugLines.insert(0, '$stamp $line');
+      _events.insert(0, '$stamp $line');
       return;
     }
     setState(() {
-      _debugLines.insert(0, '$stamp $line');
-      if (_debugLines.length > 8) {
-        _debugLines.removeRange(8, _debugLines.length);
+      _events.insert(0, '$stamp $line');
+      if (_events.length > 8) {
+        _events.removeRange(8, _events.length);
       }
     });
   }
@@ -254,66 +164,118 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final statusColor = (_running && _pcOnline)
+        ? const Color(0xFF19A94B)
+        : _running
+            ? const Color(0xFFE09C18)
+            : cs.outline;
 
     return Scaffold(
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(22, 22, 22, 18),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const SizedBox(height: 12),
               Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'ClipSync',
-                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.w600),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    'v$kAppVersion',
-                    style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
-                  ),
-                  const Spacer(),
                   Container(
-                    width: 10,
-                    height: 10,
+                    width: 42,
+                    height: 42,
                     decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: (_running && _pcOnline)
-                          ? Colors.green
-                          : _running
-                          ? Colors.orange
-                          : Colors.grey.shade400,
+                      color: cs.primary,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(
+                      Icons.content_paste_go_rounded,
+                      color: cs.onPrimary,
+                      size: 25,
                     ),
                   ),
-                  const SizedBox(width: 6),
-                  Text(
-                    (_running && _pcOnline)
-                        ? 'Online'
-                        : _running
-                        ? 'Connecting'
-                        : 'Offline',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: (_running && _pcOnline)
-                          ? Colors.green
-                          : Colors.grey,
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Text(
+                              'ClipSync',
+                              style: TextStyle(
+                                fontSize: 25,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              'v$kAppVersion',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: cs.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'By $kAuthorName',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: cs.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: statusColor.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 8,
+                          height: 8,
+                          decoration: BoxDecoration(
+                            color: statusColor,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          (_running && _pcOnline)
+                              ? 'Online'
+                              : _running
+                                  ? 'Syncing'
+                                  : 'Offline',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: statusColor,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: 18),
               Text(
                 _status,
-                style: TextStyle(fontSize: 13, color: cs.onSurfaceVariant),
+                style: TextStyle(fontSize: 14, color: cs.onSurfaceVariant),
               ),
-              const SizedBox(height: 32),
+              const SizedBox(height: 30),
               Text(
                 'PC ID',
                 style: TextStyle(
                   fontSize: 12,
-                  fontWeight: FontWeight.w500,
+                  fontWeight: FontWeight.w700,
                   color: cs.onSurfaceVariant,
                 ),
               ),
@@ -324,17 +286,17 @@ class _HomeScreenState extends State<HomeScreen> {
                 onChanged: _onChanged,
                 keyboardType: TextInputType.number,
                 style: const TextStyle(
-                  fontSize: 28,
-                  fontWeight: FontWeight.w600,
+                  fontSize: 27,
+                  fontWeight: FontWeight.w700,
                   letterSpacing: 4,
                 ),
                 decoration: InputDecoration(
                   hintText: 'XXX-XXX-XXX',
                   hintStyle: TextStyle(
-                    fontSize: 28,
+                    fontSize: 27,
                     fontWeight: FontWeight.w300,
                     letterSpacing: 4,
-                    color: cs.onSurfaceVariant.withOpacity(0.3),
+                    color: cs.onSurfaceVariant.withValues(alpha: 0.3),
                   ),
                   filled: true,
                   fillColor: cs.surfaceContainerHighest,
@@ -348,112 +310,50 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 18),
               SizedBox(
                 width: double.infinity,
                 height: 54,
-                child: FilledButton(
+                child: FilledButton.icon(
                   onPressed: _running ? _stop : _start,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: _running
-                        ? Colors.red.shade400
-                        : cs.primary,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
+                  icon: Icon(
+                    _running ? Icons.stop_rounded : Icons.sync_rounded,
                   ),
-                  child: Text(
+                  label: Text(
                     _running ? 'Stop Sync' : 'Start Sync',
                     style: const TextStyle(
                       fontSize: 17,
-                      fontWeight: FontWeight.w600,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  style: FilledButton.styleFrom(
+                    backgroundColor:
+                        _running ? const Color(0xFFE34337) : cs.primary,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
                     ),
                   ),
                 ),
               ),
               if (_running) ...[
                 const SizedBox(height: 12),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 10,
-                  ),
-                  decoration: BoxDecoration(
-                    color: cs.primaryContainer.withOpacity(0.4),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.info_outline_rounded,
-                        size: 15,
-                        color: cs.primary,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Running in background. You can turn the screen off.',
-                          style: TextStyle(fontSize: 12, color: cs.primary),
-                        ),
-                      ),
-                    ],
-                  ),
+                _InfoStrip(
+                  icon: Icons.bolt_rounded,
+                  text: 'Background sync active',
+                  color: cs.primary,
                 ),
               ],
-              const SizedBox(height: 12),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: cs.surfaceContainerHighest.withOpacity(0.7),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Debug',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: cs.onSurfaceVariant,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      'Relay: $kRelayUrl',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: cs.onSurfaceVariant,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    for (final line in _debugLines)
-                      Text(
-                        line,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: cs.onSurfaceVariant,
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-              const Spacer(),
+              const SizedBox(height: 28),
               if (_lastClip.isNotEmpty) ...[
                 Text(
                   'Last clipboard',
                   style: TextStyle(
                     fontSize: 12,
                     color: cs.onSurfaceVariant,
-                    fontWeight: FontWeight.w500,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(height: 8),
                 GestureDetector(
                   onTap: () async {
                     await Clipboard.setData(ClipboardData(text: _lastClip));
@@ -481,16 +381,108 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  'Tap to copy again',
-                  style: TextStyle(fontSize: 11, color: cs.onSurfaceVariant),
+              ],
+              const SizedBox(height: 18),
+              TextButton.icon(
+                onPressed: () {
+                  setState(() {
+                    _showDiagnostics = !_showDiagnostics;
+                  });
+                },
+                icon: Icon(
+                  _showDiagnostics
+                      ? Icons.expand_less_rounded
+                      : Icons.expand_more_rounded,
+                ),
+                label: const Text('Diagnostics'),
+              ),
+              if (_showDiagnostics) ...[
+                const SizedBox(height: 6),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: cs.surfaceContainerHighest.withValues(alpha: 0.72),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Relay: $kRelayUrl',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: cs.onSurfaceVariant,
+                        ),
+                      ),
+                      if (_targetId.isNotEmpty)
+                        Text(
+                          'Target: ${fmtId(_targetId)}',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: cs.onSurfaceVariant,
+                          ),
+                        ),
+                      const SizedBox(height: 7),
+                      for (final line in _events)
+                        Text(
+                          line,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: cs.onSurfaceVariant,
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
               ],
-              const SizedBox(height: 8),
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _InfoStrip extends StatelessWidget {
+  const _InfoStrip({
+    required this.icon,
+    required this.text,
+    required this.color,
+  });
+
+  final IconData icon;
+  final String text;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.09),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 17, color: color),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: color,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

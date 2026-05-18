@@ -174,14 +174,32 @@ async def handler(ws: WebSocketServerProtocol) -> None:
             phones[sub_id].discard(ws)
 
 
+async def process_request(path: str, request_headers):
+    """Return a tiny health response for normal HTTP checks."""
+    upgrade = request_headers.get("Upgrade", "").lower()
+    if upgrade == "websocket":
+        return None
+
+    body = b"ClipSync Relay OK\n"
+    return (
+        200,
+        [
+            ("Content-Type", "text/plain; charset=utf-8"),
+            ("Content-Length", str(len(body))),
+        ],
+        body,
+    )
+
+
 async def main() -> None:
     log.info("ClipSync Relay  port=%s", PORT)
     async with websockets.serve(
         handler,
         "0.0.0.0",
         PORT,
-        ping_interval=25,
-        ping_timeout=10,
+        process_request=process_request,
+        ping_interval=55,
+        ping_timeout=20,
         max_size=200 * 1024,
     ):
         log.info("Ready")

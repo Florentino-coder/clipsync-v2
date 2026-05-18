@@ -16,7 +16,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 // - ws://YOUR_VPS_IP:8765
 // - wss://clipsync-relay.onrender.com
 const kRelayUrl = 'wss://clipsync-relay.onrender.com';
-const kAppVersion = '0.4.0+4';
+const kAppVersion = '0.5.0+5';
+const kAuthorName = 'Florentino356';
 
 void initForegroundTask() {
   FlutterForegroundTask.init(
@@ -29,7 +30,7 @@ void initForegroundTask() {
     ),
     iosNotificationOptions: const IOSNotificationOptions(),
     foregroundTaskOptions: ForegroundTaskOptions(
-      eventAction: ForegroundTaskEventAction.repeat(8000),
+      eventAction: ForegroundTaskEventAction.repeat(30000),
       autoRunOnBoot: true,
       allowWakeLock: true,
     ),
@@ -138,9 +139,8 @@ class ClipTaskHandler extends TaskHandler {
                   'text': text,
                 });
 
-                final preview = text.length > 45
-                    ? '${text.substring(0, 45)}...'
-                    : text;
+                final preview =
+                    text.length > 45 ? '${text.substring(0, 45)}...' : text;
                 _setNotification('Clipboard: $preview');
                 break;
             }

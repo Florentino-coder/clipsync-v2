@@ -6,17 +6,18 @@ Copy text on your PC and sync it to an Android clipboard through a lightweight W
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/Florentino-coder/clipsync)
 
-## Download Android APK
+## Download Test Builds
 
-The latest public APK is published from a separate public release repository:
+The latest APK and Windows EXE are published from GitHub Actions:
 
-[Download ClipSync.apk](https://github.com/Florentino-coder/clipsync/releases/download/android-latest/ClipSync.apk)
+- [Download ClipSync.apk](https://github.com/Florentino-coder/clipsync/releases/download/android-latest/ClipSync.apk)
+- [Download ClipSyncPC.exe](https://github.com/Florentino-coder/clipsync/releases/download/android-latest/ClipSyncPC.exe)
 
-If the release asset is not ready yet, open the private repository Actions tab and check the latest `Build Android APK` run.
+If a release asset is not ready yet, open the repository Actions tab and check the latest `Build Release Files` run.
 
 ## Public APK Release Setup
 
-This private repository builds the Android APK, then publishes only `ClipSync.apk` to the public `Florentino-coder/clipsync-apk` release.
+This repository builds the Android APK and Windows EXE. It can also publish only `ClipSync.apk` to the public `Florentino-coder/clipsync-apk` release.
 
 One-time setup:
 
@@ -31,7 +32,9 @@ Current relay WebSocket URL:
 wss://clipsync-relay.onrender.com
 ```
 
-Use it with the PC client:
+The Windows client opens as a GUI app and stores its machine ID in the current user's app data folder.
+
+Use the relay URL with the PC client if you run your own server:
 
 ```powershell
 .\ClipSyncPC.exe --relay-url wss://clipsync-relay.onrender.com
