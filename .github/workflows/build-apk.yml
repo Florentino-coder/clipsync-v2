@@ -7,11 +7,13 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build-apk:
     runs-on: ubuntu-latest
+    env:
+      PUBLIC_RELEASE_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
 
     steps:
       - name: Checkout
@@ -36,6 +38,7 @@ jobs:
           rm -rf mobile_build/lib
           cp -R mobile/lib mobile_build/lib
           cp mobile/android/app/src/main/AndroidManifest.xml mobile_build/android/app/src/main/AndroidManifest.xml
+          perl -0pi -e 's/\n    ndkVersion = flutter\.ndkVersion\n/\n/' mobile_build/android/app/build.gradle.kts
 
       - name: Install dependencies
         working-directory: mobile_build
@@ -56,13 +59,25 @@ jobs:
           name: ClipSync-APK
           path: artifacts/ClipSync.apk
 
-      - name: Upload APK release
+      - name: Check public release configuration
+        if: github.ref == 'refs/heads/master'
+        run: |
+          if [ -z "$PUBLIC_RELEASE_TOKEN" ]; then
+            echo "::error::Set the PUBLIC_RELEASE_TOKEN repository secret so this workflow can publish ClipSync.apk to Florentino-coder/clipsync-apk."
+            exit 1
+          fi
+
+      - name: Upload APK to public release
         if: github.ref == 'refs/heads/master'
         uses: ncipollo/release-action@v1
         with:
+          owner: Florentino-coder
+          repo: clipsync-apk
+          token: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
           tag: android-latest
           name: ClipSync Android APK
-          body: Latest test APK built from master.
+          body: Latest test APK built from Florentino-coder/clipsync@${{ github.sha }}.
+          commit: main
           artifacts: artifacts/ClipSync.apk
           allowUpdates: true
           removeArtifacts: true
