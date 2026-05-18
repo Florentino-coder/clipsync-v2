@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-apk:
@@ -44,14 +44,14 @@ jobs:
         working-directory: mobile_build
         run: flutter pub get
 
-      - name: Build release APK
+      - name: Build debug APK
         working-directory: mobile_build
-        run: flutter build apk --release
+        run: flutter build apk --debug
 
       - name: Rename APK
         run: |
           mkdir -p artifacts
-          cp mobile_build/build/app/outputs/flutter-apk/app-release.apk artifacts/ClipSync.apk
+          cp mobile_build/build/app/outputs/flutter-apk/app-debug.apk artifacts/ClipSync.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
@@ -59,16 +59,22 @@ jobs:
           name: ClipSync-APK
           path: artifacts/ClipSync.apk
 
-      - name: Check public release configuration
+      - name: Upload APK to repository release
         if: github.ref == 'refs/heads/master'
-        run: |
-          if [ -z "$PUBLIC_RELEASE_TOKEN" ]; then
-            echo "::error::Set the PUBLIC_RELEASE_TOKEN repository secret so this workflow can publish ClipSync.apk to Florentino-coder/clipsync-apk."
-            exit 1
-          fi
+        uses: ncipollo/release-action@v1
+        with:
+          token: ${{ github.token }}
+          tag: android-latest
+          name: ClipSync Android APK
+          body: Latest debug APK built from master@${{ github.sha }}.
+          artifacts: artifacts/ClipSync.apk
+          allowUpdates: true
+          removeArtifacts: true
+          replacesArtifacts: true
+          artifactErrorsFailBuild: true
 
       - name: Upload APK to public release
-        if: github.ref == 'refs/heads/master'
+        if: github.ref == 'refs/heads/master' && env.PUBLIC_RELEASE_TOKEN != ''
         uses: ncipollo/release-action@v1
         with:
           owner: Florentino-coder
@@ -76,7 +82,7 @@ jobs:
           token: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
           tag: android-latest
           name: ClipSync Android APK
-          body: Latest test APK built from Florentino-coder/clipsync@${{ github.sha }}.
+          body: Latest debug APK built from Florentino-coder/clipsync@${{ github.sha }}.
           commit: main
           artifacts: artifacts/ClipSync.apk
           allowUpdates: true

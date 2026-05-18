@@ -92,14 +92,23 @@ class ClipTaskHandler extends TaskHandler {
                 _setNotification(
                   online ? 'PC online - ready' : 'Waiting for PC...',
                 );
+                FlutterForegroundTask.sendDataToMain(
+                  {'type': 'status', 'online': online},
+                );
                 break;
 
               case 'pc_online':
                 _setNotification('PC online - ready');
+                FlutterForegroundTask.sendDataToMain(
+                  {'type': 'status', 'online': true},
+                );
                 break;
 
               case 'pc_offline':
                 _setNotification('PC offline');
+                FlutterForegroundTask.sendDataToMain(
+                  {'type': 'status', 'online': false},
+                );
                 break;
 
               case 'clip':

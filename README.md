@@ -10,7 +10,7 @@ Copy text on your PC and sync it to an Android clipboard through a lightweight W
 
 The latest public APK is published from a separate public release repository:
 
-[Download ClipSync.apk](https://github.com/Florentino-coder/clipsync-apk/releases/download/android-latest/ClipSync.apk)
+[Download ClipSync.apk](https://github.com/Florentino-coder/clipsync/releases/download/android-latest/ClipSync.apk)
 
 If the release asset is not ready yet, open the private repository Actions tab and check the latest `Build Android APK` run.
 

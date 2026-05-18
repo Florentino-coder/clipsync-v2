@@ -57,6 +57,12 @@ class _HomeScreenState extends State<HomeScreen> {
         _lastClip = msg['text'] as String? ?? '';
         _status = 'Clipboard received';
       });
+    } else if (msg['type'] == 'status') {
+      final online = msg['online'] == true;
+      setState(() {
+        _pcOnline = online;
+        _status = online ? 'PC online - ready' : 'Waiting for PC...';
+      });
     }
   }
 
