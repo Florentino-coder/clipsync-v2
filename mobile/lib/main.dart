@@ -1,12 +1,14 @@
 // lib/main.dart
 
 import 'package:flutter/material.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
 import 'clip_service.dart';
 import 'home_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  FlutterForegroundTask.initCommunicationPort();
   initForegroundTask();
   runApp(const App());
 }
