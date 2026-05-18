@@ -8,11 +8,11 @@ Copy text on your PC and sync it to an Android clipboard through a lightweight W
 
 ## Download Android APK
 
-The APK is built by GitHub Actions:
+The latest APK is published as a GitHub release:
 
-1. Open the repository Actions tab.
-2. Open the latest `Build Android APK` run.
-3. Download the `ClipSync-APK` artifact.
+[Download ClipSync.apk](https://github.com/Florentino-coder/clipsync/releases/download/android-latest/ClipSync.apk)
+
+If the release asset is not ready yet, open the repository Actions tab and check the latest `Build Android APK` run.
 
 Current relay WebSocket URL:
 

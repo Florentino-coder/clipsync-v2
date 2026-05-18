@@ -9,8 +9,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  flutter_foreground_task: ^8.0.5
-  shared_preferences: ^2.3.2
+  flutter_foreground_task: 8.0.5
+  shared_preferences: 2.3.2
 
 dev_dependencies:
   flutter_test:
