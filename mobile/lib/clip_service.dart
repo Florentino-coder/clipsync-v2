@@ -13,7 +13,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 // Examples:
 // - ws://YOUR_VPS_IP:8765
 // - wss://clipsync-relay.onrender.com
-const kRelayUrl = 'ws://YOUR_VPS_IP:8765';
+const kRelayUrl = 'wss://clipsync-relay.onrender.com';
 
 void initForegroundTask() {
   FlutterForegroundTask.init(

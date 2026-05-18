@@ -11,13 +11,13 @@ Deploy this folder as a Render Web Service.
 
 The relay reads Render's `PORT` environment variable automatically.
 
-After deployment, use the public Render URL as a WebSocket URL:
+Current relay WebSocket URL:
 
 ```text
-wss://YOUR-RENDER-SERVICE.onrender.com
+wss://clipsync-relay.onrender.com
 ```
 
 Use that value in:
 
-- PC: `ClipSyncPC.exe --relay-url wss://YOUR-RENDER-SERVICE.onrender.com`
-- Flutter: `const kRelayUrl = 'wss://YOUR-RENDER-SERVICE.onrender.com';`
+- PC: `ClipSyncPC.exe --relay-url wss://clipsync-relay.onrender.com`
+- Flutter: `const kRelayUrl = 'wss://clipsync-relay.onrender.com';`
