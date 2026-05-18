@@ -6,6 +6,14 @@ Copy text on your PC and sync it to an Android clipboard through a lightweight W
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/Florentino-coder/clipsync)
 
+## Download Android APK
+
+The APK is built by GitHub Actions:
+
+1. Open the repository Actions tab.
+2. Open the latest `Build Android APK` run.
+3. Download the `ClipSync-APK` artifact.
+
 Current relay WebSocket URL:
 
 ```text

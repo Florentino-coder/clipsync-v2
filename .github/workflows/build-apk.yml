@@ -1,0 +1,61 @@
+name: Build Android APK
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Create Flutter Android project
+        run: |
+          flutter create --platforms=android --org com.clipsync mobile_build
+          cp mobile/pubspec.yaml mobile_build/pubspec.yaml
+          rm -rf mobile_build/lib
+          cp -R mobile/lib mobile_build/lib
+          cp mobile/android/app/src/main/AndroidManifest.xml mobile_build/android/app/src/main/AndroidManifest.xml
+
+      - name: Install dependencies
+        working-directory: mobile_build
+        run: flutter pub get
+
+      - name: Analyze
+        working-directory: mobile_build
+        run: flutter analyze
+
+      - name: Build release APK
+        working-directory: mobile_build
+        run: flutter build apk --release
+
+      - name: Rename APK
+        run: |
+          mkdir -p artifacts
+          cp mobile_build/build/app/outputs/flutter-apk/app-release.apk artifacts/ClipSync.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClipSync-APK
+          path: artifacts/ClipSync.apk
