@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.dart_tool/
+build/
+
+pc/.venv/
+pc/build/
+pc/dist/
+pc/clipsync.id
+
+mobile/.gradle/
+mobile/build/

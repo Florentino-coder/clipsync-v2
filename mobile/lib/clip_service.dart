@@ -1,0 +1,161 @@
+// lib/clip_service.dart
+
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:math';
+
+import 'package:flutter/services.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+// Configure this with your relay WebSocket URL.
+// Examples:
+// - ws://YOUR_VPS_IP:8765
+// - wss://clipsync-relay.onrender.com
+const kRelayUrl = 'ws://YOUR_VPS_IP:8765';
+
+void initForegroundTask() {
+  FlutterForegroundTask.init(
+    androidNotificationOptions: AndroidNotificationOptions(
+      channelId: 'clipsync',
+      channelName: 'ClipSync',
+      channelDescription: 'clipboard sync',
+      channelImportance: NotificationChannelImportance.LOW,
+      priority: NotificationPriority.LOW,
+    ),
+    iosNotificationOptions: const IOSNotificationOptions(),
+    foregroundTaskOptions: ForegroundTaskOptions(
+      eventAction: ForegroundTaskEventAction.repeat(8000),
+      autoRunOnBoot: true,
+      allowWakeLock: true,
+    ),
+  );
+}
+
+@pragma('vm:entry-point')
+void taskEntryPoint() {
+  FlutterForegroundTask.setTaskHandler(ClipTaskHandler());
+}
+
+Future<String> getOrCreatePhoneId() async {
+  final p = await SharedPreferences.getInstance();
+  final id = p.getString('phone_id') ?? '';
+  if (id.length == 9 && int.tryParse(id) != null) return id;
+
+  final r = Random();
+  final nid = List.generate(9, (_) => r.nextInt(10).toString()).join();
+  await p.setString('phone_id', nid);
+  return nid;
+}
+
+String fmtId(String id) {
+  final d = id.replaceAll('-', '');
+  if (d.length != 9) return id;
+  return '${d.substring(0, 3)}-${d.substring(3, 6)}-${d.substring(6)}';
+}
+
+class ClipTaskHandler extends TaskHandler {
+  WebSocket? _ws;
+  String _targetId = '';
+  bool _alive = false;
+  Timer? _retryTimer;
+
+  @override
+  Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
+    _targetId = (await FlutterForegroundTask.getData<String>(key: 'target_id') ??
+            '')
+        .replaceAll('-', '');
+    _alive = true;
+    _connect();
+  }
+
+  void _connect() async {
+    if (!_alive || _targetId.isEmpty) return;
+
+    try {
+      await _ws?.close();
+      _ws =
+          await WebSocket.connect(kRelayUrl).timeout(const Duration(seconds: 10));
+
+      _ws!.add(jsonEncode({'action': 'subscribe', 'target': _targetId}));
+
+      _ws!.listen(
+        (data) async {
+          try {
+            final msg = jsonDecode(data as String) as Map<String, dynamic>;
+            final type = (msg['type'] ?? msg['status']) as String? ?? '';
+
+            switch (type) {
+              case 'subscribed':
+                final online = msg['online'] as bool? ?? false;
+                _setNotification(
+                  online ? 'PC online - ready' : 'Waiting for PC...',
+                );
+                break;
+
+              case 'pc_online':
+                _setNotification('PC online - ready');
+                break;
+
+              case 'pc_offline':
+                _setNotification('PC offline');
+                break;
+
+              case 'clip':
+                final text = (msg['text'] as String? ?? '').trim();
+                if (text.isEmpty) break;
+
+                await Clipboard.setData(ClipboardData(text: text));
+
+                FlutterForegroundTask.sendDataToMain(
+                  {'type': 'clip', 'text': text},
+                );
+
+                final preview =
+                    text.length > 45 ? '${text.substring(0, 45)}...' : text;
+                _setNotification('Clipboard: $preview');
+                break;
+            }
+          } catch (_) {}
+        },
+        onDone: _retry,
+        onError: (_) => _retry(),
+        cancelOnError: true,
+      );
+    } catch (_) {
+      _setNotification('Connecting...');
+      _retry();
+    }
+  }
+
+  void _retry() {
+    if (!_alive) return;
+    _retryTimer?.cancel();
+    _retryTimer = Timer(const Duration(seconds: 5), _connect);
+  }
+
+  void _setNotification(String text) {
+    FlutterForegroundTask.updateService(
+      notificationTitle: 'ClipSync',
+      notificationText: text,
+    );
+  }
+
+  @override
+  void onRepeatEvent(DateTime timestamp) {
+    if (_ws == null || _ws!.readyState != WebSocket.open) {
+      _connect();
+    }
+  }
+
+  @override
+  Future<void> onDestroy(DateTime timestamp) async {
+    _alive = false;
+    _retryTimer?.cancel();
+    await _ws?.close();
+  }
+
+  @override
+  void onReceiveData(Object data) {}
+}
