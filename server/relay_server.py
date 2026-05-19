@@ -1,22 +1,26 @@
 """
-relay_server.py - ClipSync Relay (Basic)
-Install: pip install websockets
+relay_server.py - ClipSync Relay
+Install: pip install -r requirements.txt
 Run:     python3 relay_server.py
 """
 
+from __future__ import annotations
+
 import asyncio
+import contextlib
 import json
 import logging
 import os
 import time
 from collections import defaultdict
+from typing import Any
 
-import websockets
-from websockets.server import WebSocketServerProtocol
+from aiohttp import WSMsgType, web
 
 PORT = int(os.getenv("PORT", "8765"))
 CONNECTION_TIMEOUT_SECONDS = int(os.getenv("CONNECTION_TIMEOUT_SECONDS", "1800"))
 CLEANUP_INTERVAL_SECONDS = int(os.getenv("CLEANUP_INTERVAL_SECONDS", "60"))
+MAX_MESSAGE_BYTES = 200 * 1024
 
 logging.basicConfig(
     format="%(asctime)s %(message)s",
@@ -25,14 +29,16 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
+Ws = web.WebSocketResponse
+
 # id (9-digit str) -> PC WebSocket
-pcs: dict[str, WebSocketServerProtocol] = {}
+pcs: dict[str, Ws] = {}
 
 # id -> set of phone WebSockets waiting for that PC
-phones: dict[str, set[WebSocketServerProtocol]] = defaultdict(set)
+phones: dict[str, set[Ws]] = defaultdict(set)
 
 # WebSocket -> connection metadata
-connections: dict[WebSocketServerProtocol, dict] = {}
+connections: dict[Ws, dict[str, Any]] = {}
 
 
 def clean(raw: str) -> str | None:
@@ -45,14 +51,15 @@ def fmt(d: str) -> str:
     return f"{d[:3]}-{d[3:6]}-{d[6:]}"
 
 
-async def send(ws: WebSocketServerProtocol, data: dict) -> None:
+async def send(ws: Ws, data: dict[str, Any]) -> None:
     try:
-        await ws.send(json.dumps(data, ensure_ascii=False))
+        if not ws.closed:
+            await ws.send_str(json.dumps(data, ensure_ascii=False))
     except Exception:
         pass
 
 
-def touch(ws: WebSocketServerProtocol) -> None:
+def touch(ws: Ws) -> None:
     info = connections.setdefault(ws, {"role": "", "id": "", "last_seen": 0.0})
     info["last_seen"] = time.monotonic()
 
@@ -63,7 +70,7 @@ async def notify_phone_count(pid: str) -> None:
         await send(pc, {"type": "phone_count", "count": len(phones.get(pid, set()))})
 
 
-async def unregister(ws: WebSocketServerProtocol, reason: str = "closed") -> None:
+async def unregister(ws: Ws, reason: str = "closed") -> None:
     info = connections.pop(ws, {})
     role = info.get("role", "")
     pid = info.get("id", "")
@@ -96,22 +103,26 @@ async def cleanup_stale_connections() -> None:
         ]
         for ws in stale:
             await unregister(ws, "heartbeat_timeout")
-            try:
-                await ws.close(code=4000, reason="heartbeat_timeout")
-            except Exception:
-                pass
+            with contextlib.suppress(Exception):
+                await ws.close(code=4000, message=b"heartbeat_timeout")
 
 
-async def handler(ws: WebSocketServerProtocol) -> None:
-    peer_id = None  # PC id
-    sub_id = None  # phone target id
+async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
+    ws = web.WebSocketResponse(heartbeat=55, max_msg_size=MAX_MESSAGE_BYTES)
+    await ws.prepare(request)
     touch(ws)
 
+    peer_id = None  # PC id
+    sub_id = None  # phone target id
+
     try:
-        async for raw in ws:
+        async for item in ws:
+            if item.type != WSMsgType.TEXT:
+                continue
+
             touch(ws)
             try:
-                msg = json.loads(raw)
+                msg = json.loads(item.data)
             except Exception:
                 continue
 
@@ -124,14 +135,11 @@ async def handler(ws: WebSocketServerProtocol) -> None:
                     await send(ws, {"error": "invalid_id"})
                     continue
 
-                # Kick the old PC connection for this id, if any.
                 old = pcs.get(pid)
                 if old and old is not ws:
                     await send(old, {"type": "kicked"})
-                    try:
+                    with contextlib.suppress(Exception):
                         await old.close()
-                    except Exception:
-                        pass
 
                 pcs[pid] = ws
                 peer_id = pid
@@ -214,7 +222,7 @@ async def handler(ws: WebSocketServerProtocol) -> None:
                 dead = set()
                 for ph in list(phones.get(peer_id, set())):
                     try:
-                        await ph.send(payload)
+                        await ph.send_str(payload)
                     except Exception:
                         dead.add(ph)
 
@@ -227,57 +235,53 @@ async def handler(ws: WebSocketServerProtocol) -> None:
                     text[:50],
                 )
 
-    except websockets.exceptions.ConnectionClosed:
-        pass
-
     finally:
         await unregister(ws)
 
+    return ws
 
-async def process_request(path: str, request_headers):
-    """Return a tiny health response for normal HTTP checks."""
-    upgrade = request_headers.get("Upgrade", "").lower()
+
+async def root_handler(request: web.Request) -> web.StreamResponse:
+    upgrade = request.headers.get("Upgrade", "").lower()
     if upgrade == "websocket":
-        return None
+        return await websocket_handler(request)
 
-    if path not in {"/", "/health"}:
-        body = b"Not Found\n"
-        return (
-            404,
-            [
-                ("Content-Type", "text/plain; charset=utf-8"),
-                ("Content-Length", str(len(body))),
-                ("Cache-Control", "no-store"),
-            ],
-            body,
-        )
-
-    body = b"OK\n" if path == "/health" else b"ClipSync Relay OK\n"
-    return (
-        200,
-        [
-            ("Content-Type", "text/plain; charset=utf-8"),
-            ("Content-Length", str(len(body))),
-            ("Cache-Control", "no-store"),
-        ],
-        body,
+    return web.Response(
+        text="ClipSync Relay OK\n",
+        content_type="text/plain",
+        headers={"Cache-Control": "no-store"},
     )
 
 
-async def main() -> None:
+async def health_handler(request: web.Request) -> web.Response:
+    return web.Response(
+        text="OK\n",
+        content_type="text/plain",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+async def start_background_tasks(app: web.Application) -> None:
+    app["cleanup_task"] = asyncio.create_task(cleanup_stale_connections())
+
+
+async def cleanup_background_tasks(app: web.Application) -> None:
+    task = app.get("cleanup_task")
+    if task:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+
+def create_app() -> web.Application:
+    app = web.Application()
+    app.router.add_get("/", root_handler, allow_head=True)
+    app.router.add_get("/health", health_handler, allow_head=True)
+    app.on_startup.append(start_background_tasks)
+    app.on_cleanup.append(cleanup_background_tasks)
+    return app
+
+
+if __name__ == "__main__":
     log.info("ClipSync Relay  port=%s", PORT)
-    async with websockets.serve(
-        handler,
-        "0.0.0.0",
-        PORT,
-        process_request=process_request,
-        ping_interval=55,
-        ping_timeout=20,
-        max_size=200 * 1024,
-    ):
-        asyncio.create_task(cleanup_stale_connections())
-        log.info("Ready")
-        await asyncio.Future()
-
-
-asyncio.run(main())
+    web.run_app(create_app(), host="0.0.0.0", port=PORT, access_log=None)

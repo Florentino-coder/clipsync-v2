@@ -35,7 +35,7 @@ except Exception:  # pragma: no cover - used only when Tk is unavailable.
     ttk = None
 
 APP_NAME = "ClipSync PC"
-APP_VERSION = "0.8.0"
+APP_VERSION = "0.8.1"
 AUTHOR_NAME = "Florentino356"
 DEFAULT_RELAY_URL = "wss://clipsync-relay.onrender.com"
 UPDATE_MANIFEST_URL = (
@@ -593,13 +593,14 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
         self.update_button.pack(side="right", padx=(10, 0))
 
         self.last_var = tk.StringVar(value="Last clipboard: -")
-        ttk.Label(
+        self.last_label = ttk.Label(
             outer,
             textvariable=self.last_var,
             style="Muted.TLabel",
             font=("Segoe UI", 9),
             wraplength=410,
-        ).pack(anchor="w", pady=(0, 12))
+        )
+        self.last_label.pack(anchor="w", pady=(0, 12))
 
         ttk.Label(
             outer,
@@ -676,7 +677,12 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
             self.update_version = str(data.get("version", ""))
             self.update_url = str(data.get("url", ""))
             self.update_var.set(f"Update available: v{self.update_version}")
-            self.update_frame.pack(fill="x", pady=(0, 10))
+            if not self.update_frame.winfo_ismapped():
+                self.update_frame.pack(
+                    fill="x",
+                    pady=(0, 10),
+                    before=self.last_label,
+                )
             self._append_log(f"Update available v{self.update_version}")
         elif name == "update_status":
             self._append_log(str(data.get("message", "")))

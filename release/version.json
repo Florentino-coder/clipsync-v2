@@ -2,11 +2,11 @@
   "schema": 1,
   "released_at": "2026-05-20",
   "pc": {
-    "version": "0.8.0",
+    "version": "0.8.1",
     "installer_url": "https://github.com/Florentino-coder/clipsync/releases/download/android-latest/ClipSyncPC_Setup.exe",
     "portable_url": "https://github.com/Florentino-coder/clipsync/releases/download/android-latest/ClipSyncPC.exe",
     "required": false,
-    "notes": "Adds relay heartbeat support, stale connection cleanup, and health endpoint support."
+    "notes": "Fixes the Windows update install button and keeps relay health checks compatible with free HEAD monitors."
   },
   "android": {
     "version": "0.8.0+11",
