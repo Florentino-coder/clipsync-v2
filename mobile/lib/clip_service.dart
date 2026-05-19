@@ -15,7 +15,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 // - ws://YOUR_VPS_IP:8765
 // - wss://clipsync-relay.onrender.com
 const kRelayUrl = 'wss://clipsync-relay.onrender.com';
-const kAppVersion = '0.6.0+9';
+const kAppVersion = '0.7.0+10';
 const kAuthorName = 'Florentino356';
 const kReconnectSteps = [2, 5, 10, 30, 60];
 

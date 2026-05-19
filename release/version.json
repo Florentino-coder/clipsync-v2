@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "released_at": "2026-05-20",
+  "pc": {
+    "version": "0.7.0",
+    "installer_url": "https://github.com/Florentino-coder/clipsync/releases/download/android-latest/ClipSyncPC_Setup.exe",
+    "portable_url": "https://github.com/Florentino-coder/clipsync/releases/download/android-latest/ClipSyncPC.exe",
+    "required": false,
+    "notes": "Adds QR pairing, smoother reconnect, update checking, and Windows setup installer."
+  },
+  "android": {
+    "version": "0.7.0+10",
+    "url": "https://github.com/Florentino-coder/clipsync/releases/download/android-latest/ClipSync.apk",
+    "required": false,
+    "notes": "Adds QR pairing, smoother reconnect, and update checking."
+  }
+}

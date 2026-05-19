@@ -11,6 +11,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'clip_service.dart';
+import 'update_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -30,6 +31,8 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _fallbackActive = false;
   bool _showDiagnostics = false;
   bool _busy = false;
+  bool _checkingUpdate = false;
+  UpdateInfo? _updateInfo;
   String _lastClip = '';
   String _status = 'Not connected';
   String _targetId = '';
@@ -38,6 +41,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _loadSaved();
+    unawaited(_checkUpdate());
     FlutterForegroundTask.addTaskDataCallback(_onData);
   }
 
@@ -64,6 +68,55 @@ class _HomeScreenState extends State<HomeScreen> {
     });
     if (running && saved.isNotEmpty) {
       _addEvent('Restored ${fmtId(saved)}');
+    }
+  }
+
+  Future<void> _checkUpdate({bool force = false}) async {
+    if (_checkingUpdate) return;
+    setState(() {
+      _checkingUpdate = true;
+    });
+
+    try {
+      final update = await checkAndroidUpdate(force: force);
+      if (!mounted) return;
+      setState(() {
+        _updateInfo = update;
+      });
+      if (update != null) {
+        _addEvent('Update available v${update.version}');
+      } else if (force) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Already up to date')),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      _addEvent('Update check error: $e');
+      if (force) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Update check failed: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _checkingUpdate = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _openUpdate() async {
+    final update = _updateInfo;
+    if (update == null) return;
+    final opened = await openUpdateUrl(update.url);
+    if (!opened) {
+      await Clipboard.setData(ClipboardData(text: update.url));
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Download link copied')),
+      );
     }
   }
 
@@ -485,6 +538,44 @@ class _HomeScreenState extends State<HomeScreen> {
                 _status,
                 style: TextStyle(fontSize: 14, color: cs.onSurfaceVariant),
               ),
+              if (_updateInfo != null) ...[
+                const SizedBox(height: 12),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 13,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: cs.primary.withValues(alpha: 0.09),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.system_update_alt_rounded,
+                        size: 18,
+                        color: cs.primary,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Update v${_updateInfo!.version} available',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: cs.primary,
+                          ),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: _openUpdate,
+                        child: const Text('Download'),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
               const SizedBox(height: 30),
               Text(
                 'PC ID',
@@ -610,18 +701,34 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ],
               const SizedBox(height: 18),
-              TextButton.icon(
-                onPressed: () {
-                  setState(() {
-                    _showDiagnostics = !_showDiagnostics;
-                  });
-                },
-                icon: Icon(
-                  _showDiagnostics
-                      ? Icons.expand_less_rounded
-                      : Icons.expand_more_rounded,
-                ),
-                label: const Text('Diagnostics'),
+              Row(
+                children: [
+                  TextButton.icon(
+                    onPressed: () {
+                      setState(() {
+                        _showDiagnostics = !_showDiagnostics;
+                      });
+                    },
+                    icon: Icon(
+                      _showDiagnostics
+                          ? Icons.expand_less_rounded
+                          : Icons.expand_more_rounded,
+                    ),
+                    label: const Text('Diagnostics'),
+                  ),
+                  const Spacer(),
+                  TextButton.icon(
+                    onPressed: _checkingUpdate
+                        ? null
+                        : () => _checkUpdate(force: true),
+                    icon: Icon(
+                      _checkingUpdate
+                          ? Icons.hourglass_top_rounded
+                          : Icons.update_rounded,
+                    ),
+                    label: const Text('Check update'),
+                  ),
+                ],
               ),
               if (_showDiagnostics) ...[
                 const SizedBox(height: 6),
@@ -654,6 +761,13 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                       Text(
                         'Mode: ${_fallbackActive ? 'app socket fallback' : 'foreground service'}',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: cs.onSurfaceVariant,
+                        ),
+                      ),
+                      Text(
+                        'Update: ${_updateInfo == null ? 'current' : 'v${_updateInfo!.version} available'}',
                         style: TextStyle(
                           fontSize: 11,
                           color: cs.onSurfaceVariant,

@@ -13,9 +13,13 @@ import asyncio
 import json
 import os
 import random
+import subprocess
 import sys
+import tempfile
 import threading
 import time
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Any, Callable
 
@@ -31,13 +35,19 @@ except Exception:  # pragma: no cover - used only when Tk is unavailable.
     ttk = None
 
 APP_NAME = "ClipSync PC"
-APP_VERSION = "0.6.0"
+APP_VERSION = "0.7.0"
 AUTHOR_NAME = "Florentino356"
 DEFAULT_RELAY_URL = "wss://clipsync-relay.onrender.com"
+UPDATE_MANIFEST_URL = (
+    "https://github.com/Florentino-coder/clipsync/releases/download/"
+    "android-latest/version.json"
+)
 CONFIG_NAME = "clipsync_pc_config.json"
 POLL_INTERVAL_SECONDS = 0.5
 MAX_CLIP_BYTES = 100 * 1024
 RECONNECT_STEPS_SECONDS = (2, 5, 10, 30, 60)
+UPDATE_CHECK_INTERVAL_SECONDS = 24 * 60 * 60
+MAX_UPDATE_MANIFEST_BYTES = 64 * 1024
 
 
 def app_base_dir() -> Path:
@@ -63,6 +73,7 @@ def user_data_dir() -> Path:
 BASE_DIR = app_base_dir()
 CONFIG_FILE = BASE_DIR / CONFIG_NAME
 ID_FILE = user_data_dir() / "clipsync.id"
+UPDATE_STATE_FILE = user_data_dir() / "update_state.json"
 
 
 def clean_id(raw: str) -> str | None:
@@ -83,6 +94,22 @@ def pairing_url(pc_id: str) -> str:
 
 def next_reconnect_delay(step: int) -> int:
     return RECONNECT_STEPS_SECONDS[min(step, len(RECONNECT_STEPS_SECONDS) - 1)]
+
+
+def parse_version(value: str) -> tuple[int, int, int, int]:
+    base, _, build = value.partition("+")
+    parts = []
+    for raw in base.split("."):
+        digits = "".join(ch for ch in raw if ch.isdigit())
+        parts.append(int(digits or "0"))
+    while len(parts) < 3:
+        parts.append(0)
+    build_digits = "".join(ch for ch in build if ch.isdigit())
+    return parts[0], parts[1], parts[2], int(build_digits or "0")
+
+
+def is_newer_version(latest: str, current: str) -> bool:
+    return parse_version(latest) > parse_version(current)
 
 
 def generate_id() -> str:
@@ -109,6 +136,71 @@ def load_config() -> dict[str, Any]:
         return data if isinstance(data, dict) else {}
     except Exception:
         return {}
+
+
+def load_update_state() -> dict[str, Any]:
+    if not UPDATE_STATE_FILE.exists():
+        return {}
+    try:
+        data = json.loads(UPDATE_STATE_FILE.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_update_state(data: dict[str, Any]) -> None:
+    try:
+        UPDATE_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        UPDATE_STATE_FILE.write_text(json.dumps(data), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def should_check_update(force: bool = False) -> bool:
+    if force:
+        return True
+    last_checked = float(load_update_state().get("last_checked", 0) or 0)
+    return time.time() - last_checked >= UPDATE_CHECK_INTERVAL_SECONDS
+
+
+def fetch_update_manifest() -> dict[str, Any]:
+    request = urllib.request.Request(
+        UPDATE_MANIFEST_URL,
+        headers={"User-Agent": f"ClipSyncPC/{APP_VERSION}"},
+    )
+    with urllib.request.urlopen(request, timeout=8) as response:
+        length = int(response.headers.get("content-length", "0") or "0")
+        if length > MAX_UPDATE_MANIFEST_BYTES:
+            raise ValueError("update manifest is too large")
+        body = response.read(MAX_UPDATE_MANIFEST_BYTES + 1)
+        if len(body) > MAX_UPDATE_MANIFEST_BYTES:
+            raise ValueError("update manifest is too large")
+    data = json.loads(body.decode("utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("update manifest is invalid")
+    save_update_state({"last_checked": time.time()})
+    return data
+
+
+def pc_update_from_manifest(manifest: dict[str, Any]) -> dict[str, Any] | None:
+    pc = manifest.get("pc")
+    if not isinstance(pc, dict):
+        return None
+    latest = str(pc.get("version", "")).strip()
+    if not latest or not is_newer_version(latest, APP_VERSION):
+        return None
+    url = (
+        str(pc.get("installer_url", "")).strip()
+        or str(pc.get("url", "")).strip()
+        or str(pc.get("portable_url", "")).strip()
+    )
+    if not url:
+        return None
+    return {
+        "version": latest,
+        "url": url,
+        "notes": str(pc.get("notes", "")).strip(),
+    }
 
 
 def resolve_relay_url(args: argparse.Namespace) -> str:
@@ -312,6 +404,9 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
         self.online = False
         self.running = False
         self.phone_count = 0
+        self.update_url = ""
+        self.update_version = ""
+        self.update_checking = False
 
         self.title(APP_NAME)
         self.geometry("480x560")
@@ -444,6 +539,12 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
             style="Muted.TLabel",
             font=("Segoe UI", 10),
         ).pack(side="left", padx=(16, 0))
+        ttk.Button(
+            actions,
+            text="Check Update",
+            style="Secondary.TButton",
+            command=lambda: self._maybe_check_update(force=True),
+        ).pack(side="right")
 
         self.status_var = tk.StringVar(value="Starting...")
         ttk.Label(
@@ -452,6 +553,22 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
             style="Title.TLabel",
             font=("Segoe UI", 11, "bold"),
         ).pack(anchor="w", pady=(0, 8))
+
+        self.update_frame = ttk.Frame(outer, style="Card.TFrame")
+        self.update_var = tk.StringVar(value="")
+        ttk.Label(
+            self.update_frame,
+            textvariable=self.update_var,
+            style="Muted.TLabel",
+            font=("Segoe UI", 9, "bold"),
+        ).pack(side="left", fill="x", expand=True)
+        self.update_button = ttk.Button(
+            self.update_frame,
+            text="Install",
+            style="Secondary.TButton",
+            command=self._install_update,
+        )
+        self.update_button.pack(side="right", padx=(10, 0))
 
         self.last_var = tk.StringVar(value="Last clipboard: -")
         ttk.Label(
@@ -484,6 +601,7 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
 
         self._set_status("Starting", "#e09c18")
         self._append_log(f"ID file: {ID_FILE}")
+        self.after(1600, self._maybe_check_update)
 
     def _draw_logo(self, canvas: tk.Canvas) -> None:
         canvas.create_rectangle(2, 2, 42, 42, fill="#2646d8", outline="#2646d8", width=0)
@@ -530,6 +648,18 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
         elif name == "error":
             self._set_status("Error", "#d92d20")
             self._append_log(f"Error: {data.get('message', '')}")
+        elif name == "update_available":
+            self.update_version = str(data.get("version", ""))
+            self.update_url = str(data.get("url", ""))
+            self.update_var.set(f"Update available: v{self.update_version}")
+            self.update_frame.pack(fill="x", pady=(0, 10))
+            self._append_log(f"Update available v{self.update_version}")
+        elif name == "update_status":
+            self._append_log(str(data.get("message", "")))
+        elif name == "update_none":
+            self._append_log("Already up to date")
+        elif name == "update_error":
+            self._append_log(f"Update check failed: {data.get('message', '')}")
 
         self.stats_var.set(f"Phones: {self.phone_count}   Sent: {self.client.sent_count}")
 
@@ -622,6 +752,60 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
                     fill="#101828",
                     outline="#101828",
                 )
+
+    def _maybe_check_update(self, force: bool = False) -> None:
+        if self.update_checking or not should_check_update(force):
+            return
+        self.update_checking = True
+        if force:
+            self._append_log("Checking for updates")
+        threading.Thread(
+            target=self._check_update_thread,
+            args=(force,),
+            daemon=True,
+        ).start()
+
+    def _check_update_thread(self, force: bool) -> None:
+        try:
+            update = pc_update_from_manifest(fetch_update_manifest())
+            if update:
+                self._thread_event("update_available", update)
+            elif force:
+                self._thread_event("update_none", {})
+        except Exception as exc:
+            if force:
+                self._thread_event("update_error", {"message": str(exc)})
+        finally:
+            self.update_checking = False
+
+    def _install_update(self) -> None:
+        if not self.update_url:
+            return
+        self.update_button.configure(state="disabled")
+        self.update_var.set(f"Downloading v{self.update_version}...")
+        threading.Thread(target=self._download_update_thread, daemon=True).start()
+
+    def _download_update_thread(self) -> None:
+        try:
+            filename = Path(urllib.parse.urlparse(self.update_url).path).name
+            if not filename:
+                filename = "ClipSyncPC_Setup.exe"
+            target = Path(tempfile.gettempdir()) / filename
+            request = urllib.request.Request(
+                self.update_url,
+                headers={"User-Agent": f"ClipSyncPC/{APP_VERSION}"},
+            )
+            with urllib.request.urlopen(request, timeout=30) as response:
+                target.write_bytes(response.read())
+            subprocess.Popen([str(target)], close_fds=True)
+            self._thread_event(
+                "update_status",
+                {"message": "Installer opened. ClipSync will close now."},
+            )
+            self.after(900, self._on_close)
+        except Exception as exc:
+            self._thread_event("update_error", {"message": str(exc)})
+            self.after(0, lambda: self.update_button.configure(state="normal"))
 
     def _start_sync(self) -> None:
         self.running = True

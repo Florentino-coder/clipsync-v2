@@ -79,12 +79,21 @@ jobs:
         shell: pwsh
         run: .\build_exe.ps1
 
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Build Windows installer
+        working-directory: pc
+        shell: pwsh
+        run: '& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer\ClipSyncPC.iss'
+
       - name: Prepare EXE artifact
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
           Copy-Item pc\dist\ClipSyncPC.exe artifacts\ClipSyncPC.exe -Force
-          Copy-Item pc\clipsync_pc_config.example.json artifacts\clipsync_pc_config.example.json -Force
+          Copy-Item pc\dist\ClipSyncPC_Setup.exe artifacts\ClipSyncPC_Setup.exe -Force
 
       - name: Upload EXE artifact
         uses: actions/upload-artifact@v4
@@ -92,7 +101,7 @@ jobs:
           name: ClipSync-Windows-EXE
           path: |
             artifacts/ClipSyncPC.exe
-            artifacts/clipsync_pc_config.example.json
+            artifacts/ClipSyncPC_Setup.exe
 
   publish-release:
     runs-on: ubuntu-latest
@@ -104,6 +113,9 @@ jobs:
       PUBLIC_RELEASE_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Download APK artifact
         uses: actions/download-artifact@v4
         with:
@@ -123,7 +135,7 @@ jobs:
           token: ${{ github.token }}
           tag: android-latest
           name: ClipSync Test Builds
-          body: Latest test APK and Windows EXE built from master@${{ github.sha }}.
+          body: Latest APK, Windows EXE, Windows setup installer, and update manifest built from master@${{ github.sha }}.
           artifacts: release/*
           allowUpdates: true
           removeArtifacts: true
