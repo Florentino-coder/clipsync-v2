@@ -6,7 +6,6 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:ui';
 
-import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -16,7 +15,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 // - ws://YOUR_VPS_IP:8765
 // - wss://clipsync-relay.onrender.com
 const kRelayUrl = 'wss://clipsync-relay.onrender.com';
-const kAppVersion = '0.5.2+7';
+const kAppVersion = '0.5.3+8';
 const kAuthorName = 'Florentino356';
 
 void initForegroundTask() {
@@ -138,15 +137,6 @@ class ClipTaskHandler extends TaskHandler {
                   'type': 'clip',
                   'text': text,
                 });
-
-                try {
-                  await Clipboard.setData(
-                    ClipboardData(text: text),
-                  ).timeout(const Duration(seconds: 2));
-                  _sendDebug('service copied len=${text.length}');
-                } catch (e) {
-                  _sendDebug('service clipboard error: $e');
-                }
 
                 final preview =
                     text.length > 45 ? '${text.substring(0, 45)}...' : text;
