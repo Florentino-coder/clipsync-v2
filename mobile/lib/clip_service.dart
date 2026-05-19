@@ -16,7 +16,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 // - ws://YOUR_VPS_IP:8765
 // - wss://clipsync-relay.onrender.com
 const kRelayUrl = 'wss://clipsync-relay.onrender.com';
-const kAppVersion = '0.5.0+5';
+const kAppVersion = '0.5.1+6';
 const kAuthorName = 'Florentino356';
 
 void initForegroundTask() {
@@ -32,6 +32,7 @@ void initForegroundTask() {
     foregroundTaskOptions: ForegroundTaskOptions(
       eventAction: ForegroundTaskEventAction.repeat(30000),
       autoRunOnBoot: true,
+      autoRunOnMyPackageReplaced: true,
       allowWakeLock: true,
     ),
   );

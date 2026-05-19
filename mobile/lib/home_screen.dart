@@ -1,5 +1,9 @@
 // lib/home_screen.dart
 
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
@@ -17,8 +21,11 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final _ctrl = TextEditingController();
   final List<String> _events = [];
+  WebSocket? _fallbackWs;
+  Timer? _fallbackRetryTimer;
   bool _running = false;
   bool _pcOnline = false;
+  bool _fallbackActive = false;
   bool _showDiagnostics = false;
   String _lastClip = '';
   String _status = 'Not connected';
@@ -34,6 +41,8 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     FlutterForegroundTask.removeTaskDataCallback(_onData);
+    _fallbackRetryTimer?.cancel();
+    _fallbackWs?.close();
     _ctrl.dispose();
     super.dispose();
   }
@@ -121,28 +130,146 @@ class _HomeScreenState extends State<HomeScreen> {
       await FlutterForegroundTask.requestIgnoreBatteryOptimization();
     }
 
-    final result = await FlutterForegroundTask.startService(
-      notificationTitle: 'ClipSync',
-      notificationText: 'Connecting...',
-      callback: taskEntryPoint,
-    );
-    _addEvent('Service $result');
+    final result = await _startOrRestartService();
+    final error = _serviceResultError(result);
+    if (error == null) {
+      _addEvent('Service started');
+      await _stopFallbackSocket();
+    } else {
+      _addEvent('Service failed: $error');
+      _addEvent('Fallback app socket enabled');
+    }
 
     setState(() {
       _running = true;
       _pcOnline = false;
-      _status = 'Connecting...';
+      _fallbackActive = error != null;
+      _status = error == null ? 'Connecting...' : 'App sync active';
     });
+
+    if (error != null) {
+      _connectFallbackSocket(raw);
+    }
   }
 
   Future<void> _stop() async {
     await FlutterForegroundTask.stopService();
+    await _stopFallbackSocket();
     _addEvent('Stopped');
     setState(() {
       _running = false;
       _pcOnline = false;
+      _fallbackActive = false;
       _status = 'Stopped';
     });
+  }
+
+  Future<ServiceRequestResult> _startOrRestartService() async {
+    if (await FlutterForegroundTask.isRunningService) {
+      return FlutterForegroundTask.restartService();
+    }
+
+    return FlutterForegroundTask.startService(
+      notificationTitle: 'ClipSync',
+      notificationText: 'Connecting...',
+      callback: taskEntryPoint,
+    );
+  }
+
+  String? _serviceResultError(ServiceRequestResult result) {
+    if (result is ServiceRequestFailure) {
+      return result.error.toString();
+    }
+    return null;
+  }
+
+  Future<void> _connectFallbackSocket(String targetId) async {
+    if (targetId.isEmpty || !_running) return;
+
+    _fallbackRetryTimer?.cancel();
+    await _fallbackWs?.close();
+    _addEvent('Fallback connecting');
+
+    try {
+      final ws = await WebSocket.connect(
+        kRelayUrl,
+      ).timeout(const Duration(seconds: 10));
+      _fallbackWs = ws;
+      ws.add(jsonEncode({'action': 'subscribe', 'target': targetId}));
+      _addEvent('Fallback subscribe ${fmtId(targetId)}');
+
+      ws.listen(
+        (data) async {
+          try {
+            final msg = jsonDecode(data as String) as Map<String, dynamic>;
+            final type = (msg['type'] ?? msg['status']) as String? ?? '';
+
+            if (type == 'subscribed') {
+              final online = msg['online'] as bool? ?? false;
+              if (!mounted) return;
+              setState(() {
+                _pcOnline = online;
+                _status = online ? 'PC online - ready' : 'Waiting for PC';
+              });
+              _addEvent('Fallback subscribed online=$online');
+            } else if (type == 'pc_online') {
+              if (!mounted) return;
+              setState(() {
+                _pcOnline = true;
+                _status = 'PC online - ready';
+              });
+            } else if (type == 'pc_offline') {
+              if (!mounted) return;
+              setState(() {
+                _pcOnline = false;
+                _status = 'PC offline';
+              });
+            } else if (type == 'clip') {
+              final text = msg['text'] as String? ?? '';
+              if (text.isEmpty) return;
+              await Clipboard.setData(ClipboardData(text: text));
+              if (!mounted) return;
+              setState(() {
+                _pcOnline = true;
+                _lastClip = text;
+                _status = 'Clipboard received';
+              });
+              _addEvent('Fallback copied ${text.length} chars');
+            }
+          } catch (e) {
+            _addEvent('Fallback message error: $e');
+          }
+        },
+        onDone: () {
+          _addEvent('Fallback socket closed');
+          _scheduleFallbackReconnect();
+        },
+        onError: (Object e) {
+          _addEvent('Fallback socket error: $e');
+          _scheduleFallbackReconnect();
+        },
+        cancelOnError: true,
+      );
+    } catch (e) {
+      _addEvent('Fallback connect error: $e');
+      _scheduleFallbackReconnect();
+    }
+  }
+
+  void _scheduleFallbackReconnect() {
+    if (!_running || !_fallbackActive || _targetId.isEmpty) return;
+    _fallbackRetryTimer?.cancel();
+    _fallbackRetryTimer = Timer(const Duration(seconds: 5), () {
+      _connectFallbackSocket(_targetId);
+    });
+  }
+
+  Future<void> _stopFallbackSocket() async {
+    _fallbackRetryTimer?.cancel();
+    _fallbackRetryTimer = null;
+    _fallbackActive = false;
+    await _fallbackWs?.close();
+    _fallbackWs = null;
   }
 
   void _addEvent(String line) {
@@ -338,9 +465,13 @@ class _HomeScreenState extends State<HomeScreen> {
               if (_running) ...[
                 const SizedBox(height: 12),
                 _InfoStrip(
-                  icon: Icons.bolt_rounded,
-                  text: 'Background sync active',
-                  color: cs.primary,
+                  icon: _fallbackActive
+                      ? Icons.phone_android_rounded
+                      : Icons.bolt_rounded,
+                  text: _fallbackActive
+                      ? 'App sync active. Keep this screen open.'
+                      : 'Background sync active',
+                  color: _fallbackActive ? const Color(0xFFE09C18) : cs.primary,
                 ),
               ],
               const SizedBox(height: 28),
@@ -425,6 +556,13 @@ class _HomeScreenState extends State<HomeScreen> {
                             color: cs.onSurfaceVariant,
                           ),
                         ),
+                      Text(
+                        'Mode: ${_fallbackActive ? 'app socket fallback' : 'foreground service'}',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: cs.onSurfaceVariant,
+                        ),
+                      ),
                       const SizedBox(height: 7),
                       for (final line in _events)
                         Text(
