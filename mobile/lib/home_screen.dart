@@ -7,6 +7,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'clip_service.dart';
@@ -23,10 +24,12 @@ class _HomeScreenState extends State<HomeScreen> {
   final List<String> _events = [];
   WebSocket? _fallbackWs;
   Timer? _fallbackRetryTimer;
+  int _fallbackRetryStep = 0;
   bool _running = false;
   bool _pcOnline = false;
   bool _fallbackActive = false;
   bool _showDiagnostics = false;
+  bool _busy = false;
   String _lastClip = '';
   String _status = 'Not connected';
   String _targetId = '';
@@ -110,7 +113,31 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<void> _scanQr() async {
+    final id = await Navigator.of(context).push<String>(
+      MaterialPageRoute(builder: (_) => const QrScanScreen()),
+    );
+    if (id == null) return;
+
+    final normalized = parsePairingCode(id);
+    if (normalized == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('QR is not a valid ClipSync PC ID')),
+      );
+      return;
+    }
+
+    setState(() {
+      _ctrl.text = fmtId(normalized);
+      _targetId = normalized;
+      _status = 'PC ID scanned';
+    });
+    _addEvent('Scanned ${fmtId(normalized)}');
+  }
+
   Future<void> _start() async {
+    if (_busy) return;
     final raw = _ctrl.text.replaceAll('-', '').trim();
 
     if (raw.length != 9 || int.tryParse(raw) == null) {
@@ -125,44 +152,70 @@ class _HomeScreenState extends State<HomeScreen> {
     await FlutterForegroundTask.saveData(key: 'target_id', value: raw);
     _targetId = raw;
     _addEvent('Start ${fmtId(raw)}');
-
-    await FlutterForegroundTask.requestNotificationPermission();
-    if (!await FlutterForegroundTask.isIgnoringBatteryOptimizations) {
-      await FlutterForegroundTask.requestIgnoreBatteryOptimization();
-    }
-
-    final result = await _startOrRestartService();
-    final error = _serviceResultError(result);
-    if (error == null) {
-      _addEvent('Service started');
-      await _stopFallbackSocket();
-    } else {
-      _addEvent('Service failed: $error');
-      _addEvent('Fallback app socket enabled');
-    }
-
     setState(() {
-      _running = true;
-      _pcOnline = false;
-      _fallbackActive = error != null;
-      _status = error == null ? 'Connecting...' : 'App sync active';
+      _busy = true;
+      _status = 'Starting...';
     });
 
-    if (error != null) {
-      _connectFallbackSocket(raw);
+    try {
+      await FlutterForegroundTask.requestNotificationPermission();
+      if (!await FlutterForegroundTask.isIgnoringBatteryOptimizations) {
+        await FlutterForegroundTask.requestIgnoreBatteryOptimization();
+      }
+
+      final result = await _startOrRestartService();
+      final error = _serviceResultError(result);
+      if (error == null) {
+        _addEvent('Service started');
+        await _stopFallbackSocket();
+      } else {
+        _addEvent('Service failed: $error');
+        _addEvent('Fallback app socket enabled');
+      }
+
+      setState(() {
+        _running = true;
+        _pcOnline = false;
+        _fallbackActive = error != null;
+        _status = error == null ? 'Connecting...' : 'App sync active';
+      });
+
+      if (error != null) {
+        _connectFallbackSocket(raw);
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+        });
+      }
     }
   }
 
   Future<void> _stop() async {
-    await FlutterForegroundTask.stopService();
-    await _stopFallbackSocket();
-    _addEvent('Stopped');
+    if (_busy) return;
     setState(() {
-      _running = false;
-      _pcOnline = false;
-      _fallbackActive = false;
-      _status = 'Stopped';
+      _busy = true;
+      _status = 'Stopping...';
     });
+    try {
+      await FlutterForegroundTask.stopService();
+      await _stopFallbackSocket();
+      await Future<void>.delayed(const Duration(milliseconds: 350));
+      _addEvent('Stopped');
+      setState(() {
+        _running = false;
+        _pcOnline = false;
+        _fallbackActive = false;
+        _status = 'Stopped';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+        });
+      }
+    }
   }
 
   Future<ServiceRequestResult> _startOrRestartService() async {
@@ -196,6 +249,7 @@ class _HomeScreenState extends State<HomeScreen> {
         kRelayUrl,
       ).timeout(const Duration(seconds: 10));
       _fallbackWs = ws;
+      _fallbackRetryStep = 0;
       ws.add(jsonEncode({'action': 'subscribe', 'target': targetId}));
       _addEvent('Fallback subscribe ${fmtId(targetId)}');
 
@@ -260,7 +314,12 @@ class _HomeScreenState extends State<HomeScreen> {
   void _scheduleFallbackReconnect() {
     if (!_running || !_fallbackActive || _targetId.isEmpty) return;
     _fallbackRetryTimer?.cancel();
-    _fallbackRetryTimer = Timer(const Duration(seconds: 5), () {
+    final delay = nextReconnectDelay(_fallbackRetryStep);
+    if (_fallbackRetryStep < kReconnectSteps.length - 1) {
+      _fallbackRetryStep += 1;
+    }
+    _addEvent('Fallback reconnect in ${delay}s');
+    _fallbackRetryTimer = Timer(Duration(seconds: delay), () {
       _connectFallbackSocket(_targetId);
     });
   }
@@ -269,6 +328,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _fallbackRetryTimer?.cancel();
     _fallbackRetryTimer = null;
     _fallbackActive = false;
+    _fallbackRetryStep = 0;
     await _fallbackWs?.close();
     _fallbackWs = null;
   }
@@ -403,6 +463,23 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ],
               ),
+              if (!_running) ...[
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  height: 46,
+                  child: OutlinedButton.icon(
+                    onPressed: _scanQr,
+                    icon: const Icon(Icons.qr_code_scanner_rounded),
+                    label: const Text('Scan PC QR'),
+                    style: OutlinedButton.styleFrom(
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
               const SizedBox(height: 18),
               Text(
                 _status,
@@ -453,12 +530,20 @@ class _HomeScreenState extends State<HomeScreen> {
                 width: double.infinity,
                 height: 54,
                 child: FilledButton.icon(
-                  onPressed: _running ? _stop : _start,
+                  onPressed: _busy ? null : (_running ? _stop : _start),
                   icon: Icon(
-                    _running ? Icons.stop_rounded : Icons.sync_rounded,
+                    _busy
+                        ? Icons.hourglass_top_rounded
+                        : _running
+                            ? Icons.stop_rounded
+                            : Icons.sync_rounded,
                   ),
                   label: Text(
-                    _running ? 'Stop Sync' : 'Start Sync',
+                    _busy
+                        ? 'Please wait'
+                        : _running
+                            ? 'Stop Sync'
+                            : 'Start Sync',
                     style: const TextStyle(
                       fontSize: 17,
                       fontWeight: FontWeight.w700,
@@ -629,6 +714,76 @@ class _InfoStrip extends StatelessWidget {
                 fontWeight: FontWeight.w600,
                 color: color,
               ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class QrScanScreen extends StatefulWidget {
+  const QrScanScreen({super.key});
+
+  @override
+  State<QrScanScreen> createState() => _QrScanScreenState();
+}
+
+class _QrScanScreenState extends State<QrScanScreen> {
+  final _controller = MobileScannerController(
+    detectionSpeed: DetectionSpeed.noDuplicates,
+  );
+  bool _done = false;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _onDetect(BarcodeCapture capture) {
+    if (_done || capture.barcodes.isEmpty) return;
+    final value = capture.barcodes.first.rawValue ?? '';
+    final id = parsePairingCode(value);
+    if (id == null) return;
+
+    _done = true;
+    Navigator.of(context).pop(id);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Scan PC QR')),
+      body: Column(
+        children: [
+          Expanded(
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                MobileScanner(
+                  controller: _controller,
+                  onDetect: _onDetect,
+                ),
+                Container(
+                  width: 238,
+                  height: 238,
+                  decoration: BoxDecoration(
+                    border: Border.all(color: cs.primary, width: 3),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(18),
+            child: Text(
+              'Point the camera at the QR on ClipSync PC.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: cs.onSurfaceVariant),
             ),
           ),
         ],

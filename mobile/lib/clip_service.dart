@@ -15,8 +15,35 @@ import 'package:shared_preferences/shared_preferences.dart';
 // - ws://YOUR_VPS_IP:8765
 // - wss://clipsync-relay.onrender.com
 const kRelayUrl = 'wss://clipsync-relay.onrender.com';
-const kAppVersion = '0.5.3+8';
+const kAppVersion = '0.6.0+9';
 const kAuthorName = 'Florentino356';
+const kReconnectSteps = [2, 5, 10, 30, 60];
+
+String? cleanId(String raw) {
+  final value = raw.replaceAll('-', '').trim();
+  return value.length == 9 && int.tryParse(value) != null ? value : null;
+}
+
+String? parsePairingCode(String code) {
+  final trimmed = code.trim();
+  final uri = Uri.tryParse(trimmed);
+  if (uri != null && uri.scheme == 'clipsync' && uri.host == 'pair') {
+    return cleanId(uri.queryParameters['id'] ?? '');
+  }
+
+  try {
+    final data = jsonDecode(trimmed);
+    if (data is Map) {
+      return cleanId('${data['id'] ?? ''}');
+    }
+  } catch (_) {}
+
+  return cleanId(trimmed);
+}
+
+int nextReconnectDelay(int step) {
+  return kReconnectSteps[step.clamp(0, kReconnectSteps.length - 1)];
+}
 
 void initForegroundTask() {
   FlutterForegroundTask.init(
@@ -65,7 +92,9 @@ class ClipTaskHandler extends TaskHandler {
   WebSocket? _ws;
   String _targetId = '';
   bool _alive = false;
+  bool _connecting = false;
   Timer? _retryTimer;
+  int _retryStep = 0;
 
   @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
@@ -79,13 +108,16 @@ class ClipTaskHandler extends TaskHandler {
 
   void _connect() async {
     if (!_alive || _targetId.isEmpty) return;
+    if (_connecting) return;
 
     try {
+      _connecting = true;
       await _ws?.close();
       _sendDebug('service connecting $kRelayUrl');
       _ws = await WebSocket.connect(
         kRelayUrl,
       ).timeout(const Duration(seconds: 10));
+      _retryStep = 0;
 
       _ws!.add(jsonEncode({'action': 'subscribe', 'target': _targetId}));
       _sendDebug('service subscribe sent ${fmtId(_targetId)}');
@@ -161,13 +193,20 @@ class ClipTaskHandler extends TaskHandler {
       _setNotification('Connecting...');
       _sendDebug('service connect error: $e');
       _retry();
+    } finally {
+      _connecting = false;
     }
   }
 
   void _retry() {
     if (!_alive) return;
     _retryTimer?.cancel();
-    _retryTimer = Timer(const Duration(seconds: 5), _connect);
+    final delay = nextReconnectDelay(_retryStep);
+    if (_retryStep < kReconnectSteps.length - 1) {
+      _retryStep += 1;
+    }
+    _sendDebug('service reconnect in ${delay}s');
+    _retryTimer = Timer(Duration(seconds: delay), _connect);
   }
 
   void _setNotification(String text) {
@@ -195,6 +234,7 @@ class ClipTaskHandler extends TaskHandler {
   @override
   Future<void> onDestroy(DateTime timestamp) async {
     _alive = false;
+    _connecting = false;
     _retryTimer?.cancel();
     await _ws?.close();
   }

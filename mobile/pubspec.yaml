@@ -3,7 +3,7 @@ description: Clipboard sync from PC to phone
 
 publish_to: "none"
 
-version: 0.5.3+8
+version: 0.6.0+9
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
@@ -12,6 +12,7 @@ dependencies:
   flutter:
     sdk: flutter
   flutter_foreground_task: 8.17.0
+  mobile_scanner: 5.2.3
   shared_preferences: 2.3.2
 
 dev_dependencies:

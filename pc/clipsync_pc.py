@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import pyperclip
+import qrcode
 import websockets
 
 try:
@@ -30,12 +31,13 @@ except Exception:  # pragma: no cover - used only when Tk is unavailable.
     ttk = None
 
 APP_NAME = "ClipSync PC"
-APP_VERSION = "0.5.0"
+APP_VERSION = "0.6.0"
 AUTHOR_NAME = "Florentino356"
 DEFAULT_RELAY_URL = "wss://clipsync-relay.onrender.com"
 CONFIG_NAME = "clipsync_pc_config.json"
 POLL_INTERVAL_SECONDS = 0.5
 MAX_CLIP_BYTES = 100 * 1024
+RECONNECT_STEPS_SECONDS = (2, 5, 10, 30, 60)
 
 
 def app_base_dir() -> Path:
@@ -73,6 +75,14 @@ def fmt_id(value: str) -> str:
     if len(digits) != 9:
         return value
     return f"{digits[:3]}-{digits[3:6]}-{digits[6:]}"
+
+
+def pairing_url(pc_id: str) -> str:
+    return f"clipsync://pair?id={pc_id.replace('-', '')}"
+
+
+def next_reconnect_delay(step: int) -> int:
+    return RECONNECT_STEPS_SECONDS[min(step, len(RECONNECT_STEPS_SECONDS) - 1)]
 
 
 def generate_id() -> str:
@@ -146,12 +156,21 @@ class ClipSyncClient:
         self.ws: Any = None
         self.phone_count = 0
         self.sent_count = 0
+        self.generation = 0
+        self.reconnect_step = 0
 
     def start(self) -> None:
         if self.running:
             return
         self.running = True
-        self.thread = threading.Thread(target=self._thread_main, daemon=True)
+        self.generation += 1
+        generation = self.generation
+        self.reconnect_step = 0
+        self.thread = threading.Thread(
+            target=self._thread_main,
+            args=(generation,),
+            daemon=True,
+        )
         self.thread.start()
         self.on_event("status", {"message": "Starting"})
 
@@ -159,22 +178,29 @@ class ClipSyncClient:
         if not self.running:
             return
         self.running = False
+        self.generation += 1
         if self.loop:
             asyncio.run_coroutine_threadsafe(self._close_ws(), self.loop)
         self.on_event("status", {"message": "Stopped"})
 
-    def _thread_main(self) -> None:
+    def _thread_main(self, generation: int) -> None:
         try:
-            asyncio.run(self._run())
+            asyncio.run(self._run(generation))
         except Exception as exc:
             self.on_event("error", {"message": str(exc)})
 
-    async def _run(self) -> None:
-        self.loop = asyncio.get_running_loop()
-        await asyncio.gather(self._ws_loop(), self._clipboard_loop())
+    def _is_current(self, generation: int) -> bool:
+        return self.running and generation == self.generation
 
-    async def _ws_loop(self) -> None:
-        while self.running:
+    async def _run(self, generation: int) -> None:
+        self.loop = asyncio.get_running_loop()
+        await asyncio.gather(
+            self._ws_loop(generation),
+            self._clipboard_loop(generation),
+        )
+
+    async def _ws_loop(self, generation: int) -> None:
+        while self._is_current(generation):
             try:
                 self.on_event("status", {"message": "Connecting"})
                 async with websockets.connect(
@@ -185,20 +211,30 @@ class ClipSyncClient:
                 ) as ws:
                     self.ws = ws
                     await ws.send(json.dumps({"action": "register", "id": self.pc_id}))
+                    self.reconnect_step = 0
                     self.on_event("connected", {})
 
                     async for raw in ws:
-                        if not self.running:
+                        if not self._is_current(generation):
                             break
                         self._handle_server_message(raw)
             except Exception as exc:
-                if self.running:
+                if self._is_current(generation):
                     self.on_event("disconnected", {"message": str(exc)})
             finally:
                 self.ws = None
 
-            if self.running:
-                await asyncio.sleep(3)
+            if self._is_current(generation):
+                delay = next_reconnect_delay(self.reconnect_step)
+                if self.reconnect_step < len(RECONNECT_STEPS_SECONDS) - 1:
+                    self.reconnect_step += 1
+                self.on_event("reconnecting", {"delay": delay})
+                await self._sleep_reconnect(delay, generation)
+
+    async def _sleep_reconnect(self, delay: int, generation: int) -> None:
+        end_at = time.monotonic() + delay
+        while self._is_current(generation) and time.monotonic() < end_at:
+            await asyncio.sleep(0.2)
 
     def _handle_server_message(self, raw: str) -> None:
         try:
@@ -218,9 +254,9 @@ class ClipSyncClient:
         elif msg.get("error"):
             self.on_event("error", {"message": str(msg.get("error"))})
 
-    async def _clipboard_loop(self) -> None:
+    async def _clipboard_loop(self, generation: int) -> None:
         last = self._read_clipboard()
-        while self.running:
+        while self._is_current(generation):
             await asyncio.sleep(POLL_INTERVAL_SECONDS)
             now = self._read_clipboard()
             if not now or now == last:
@@ -362,13 +398,21 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
             justify="center",
             state="readonly",
         )
-        id_entry.pack(side="left", fill="x", expand=True)
+        id_entry.pack(fill="x", expand=True)
+        id_actions = ttk.Frame(outer, style="Card.TFrame")
+        id_actions.pack(fill="x", pady=(0, 14))
         ttk.Button(
-            id_row,
+            id_actions,
             text="Copy ID",
             style="Secondary.TButton",
             command=self._copy_id,
-        ).pack(side="left", padx=(10, 0))
+        ).pack(side="left")
+        ttk.Button(
+            id_actions,
+            text="Show QR",
+            style="Secondary.TButton",
+            command=self._show_qr,
+        ).pack(side="left", padx=(8, 0))
 
         ttk.Label(
             outer,
@@ -473,6 +517,9 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
             self.online = False
             self._set_status("Reconnecting", "#e09c18")
             self._append_log(f"Disconnected: {data.get('message', '')}")
+        elif name == "reconnecting":
+            self._set_status("Reconnecting", "#e09c18")
+            self._append_log(f"Reconnect in {data.get('delay', '')} seconds")
         elif name == "kicked":
             self._set_status("ID is open on another PC", "#d92d20")
             self._append_log("This PC ID was kicked by another connection")
@@ -507,6 +554,74 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
     def _copy_id(self) -> None:
         pyperclip.copy(fmt_id(self.pc_id))
         self._append_log("Copied PC ID")
+
+    def _show_qr(self) -> None:
+        win = tk.Toplevel(self)
+        win.title("Pair Phone")
+        win.configure(bg="#ffffff")
+        win.resizable(False, False)
+        win.transient(self)
+        win.grab_set()
+
+        frame = ttk.Frame(win, style="Card.TFrame", padding=18)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(
+            frame,
+            text="Scan this QR with ClipSync on your phone",
+            style="Title.TLabel",
+            font=("Segoe UI", 11, "bold"),
+        ).pack(anchor="center")
+        ttk.Label(
+            frame,
+            text=fmt_id(self.pc_id),
+            style="Muted.TLabel",
+            font=("Consolas", 18, "bold"),
+        ).pack(anchor="center", pady=(6, 10))
+
+        canvas = tk.Canvas(
+            frame,
+            width=276,
+            height=276,
+            bg="#ffffff",
+            highlightthickness=0,
+        )
+        canvas.pack()
+        self._draw_qr(canvas, pairing_url(self.pc_id))
+
+        ttk.Button(
+            frame,
+            text="Close",
+            style="Secondary.TButton",
+            command=win.destroy,
+        ).pack(pady=(14, 0))
+
+    def _draw_qr(self, canvas: tk.Canvas, data: str) -> None:
+        qr = qrcode.QRCode(border=2, box_size=1)
+        qr.add_data(data)
+        qr.make(fit=True)
+        matrix = qr.get_matrix()
+        cells = len(matrix)
+        size = int(canvas["width"])
+        quiet = 8
+        cell = max(1, (size - quiet * 2) // cells)
+        qr_size = cell * cells
+        offset = (size - qr_size) // 2
+
+        canvas.create_rectangle(0, 0, size, size, fill="#ffffff", outline="#ffffff")
+        for y, row in enumerate(matrix):
+            for x, value in enumerate(row):
+                if not value:
+                    continue
+                left = offset + x * cell
+                top = offset + y * cell
+                canvas.create_rectangle(
+                    left,
+                    top,
+                    left + cell,
+                    top + cell,
+                    fill="#101828",
+                    outline="#101828",
+                )
 
     def _start_sync(self) -> None:
         self.running = True
