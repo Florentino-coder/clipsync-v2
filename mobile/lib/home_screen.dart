@@ -71,6 +71,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (type == 'clip') {
       final text = msg['text'] as String? ?? '';
+      unawaited(_copyClipFromService(text));
       setState(() {
         _pcOnline = true;
         _lastClip = text;
@@ -282,10 +283,20 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     setState(() {
       _events.insert(0, '$stamp $line');
-      if (_events.length > 8) {
-        _events.removeRange(8, _events.length);
+      if (_events.length > 12) {
+        _events.removeRange(12, _events.length);
       }
     });
+  }
+
+  Future<void> _copyClipFromService(String text) async {
+    if (text.isEmpty) return;
+    try {
+      await Clipboard.setData(ClipboardData(text: text));
+      _addEvent('UI copied ${text.length} chars');
+    } catch (e) {
+      _addEvent('UI clipboard error: $e');
+    }
   }
 
   @override

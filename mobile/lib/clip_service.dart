@@ -16,7 +16,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 // - ws://YOUR_VPS_IP:8765
 // - wss://clipsync-relay.onrender.com
 const kRelayUrl = 'wss://clipsync-relay.onrender.com';
-const kAppVersion = '0.5.1+6';
+const kAppVersion = '0.5.2+7';
 const kAuthorName = 'Florentino356';
 
 void initForegroundTask() {
@@ -132,13 +132,21 @@ class ClipTaskHandler extends TaskHandler {
                 final text = (msg['text'] as String? ?? '').trim();
                 if (text.isEmpty) break;
 
-                await Clipboard.setData(ClipboardData(text: text));
-                _sendDebug('service copied len=${text.length}');
+                _sendDebug('service recv clip len=${text.length}');
 
                 FlutterForegroundTask.sendDataToMain({
                   'type': 'clip',
                   'text': text,
                 });
+
+                try {
+                  await Clipboard.setData(
+                    ClipboardData(text: text),
+                  ).timeout(const Duration(seconds: 2));
+                  _sendDebug('service copied len=${text.length}');
+                } catch (e) {
+                  _sendDebug('service clipboard error: $e');
+                }
 
                 final preview =
                     text.length > 45 ? '${text.substring(0, 45)}...' : text;
