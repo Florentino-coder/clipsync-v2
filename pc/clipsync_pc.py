@@ -35,7 +35,7 @@ except Exception:  # pragma: no cover - used only when Tk is unavailable.
     ttk = None
 
 APP_NAME = "ClipSync PC"
-APP_VERSION = "0.8.1"
+APP_VERSION = "0.8.2"
 AUTHOR_NAME = "Florentino356"
 DEFAULT_RELAY_URL = "wss://clipsync-relay.onrender.com"
 UPDATE_MANIFEST_URL = (
@@ -690,6 +690,8 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
             self._append_log("Already up to date")
         elif name == "update_error":
             self._append_log(f"Update check failed: {data.get('message', '')}")
+        elif name == "close_after_update":
+            self.after(900, self._on_close)
 
         self.stats_var.set(f"Phones: {self.phone_count}   Sent: {self.client.sent_count}")
 
@@ -832,7 +834,7 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
                 "update_status",
                 {"message": "Installer opened. ClipSync will close now."},
             )
-            self.after(900, self._on_close)
+            self._thread_event("close_after_update", {})
         except Exception as exc:
             self._thread_event("update_error", {"message": str(exc)})
             self.after(0, lambda: self.update_button.configure(state="normal"))

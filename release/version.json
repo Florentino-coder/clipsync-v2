@@ -2,11 +2,11 @@
   "schema": 1,
   "released_at": "2026-05-20",
   "pc": {
-    "version": "0.8.1",
+    "version": "0.8.2",
     "installer_url": "https://github.com/Florentino-coder/clipsync/releases/download/android-latest/ClipSyncPC_Setup.exe",
     "portable_url": "https://github.com/Florentino-coder/clipsync/releases/download/android-latest/ClipSyncPC.exe",
     "required": false,
-    "notes": "Fixes the Windows update install button and keeps relay health checks compatible with free HEAD monitors."
+    "notes": "Fixes the setup launch step by installing the desktop app as a no-temp onedir build."
   },
   "android": {
     "version": "0.8.0+11",
