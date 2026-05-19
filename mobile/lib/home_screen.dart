@@ -25,6 +25,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final List<String> _events = [];
   WebSocket? _fallbackWs;
   Timer? _fallbackRetryTimer;
+  Timer? _fallbackHeartbeatTimer;
   int _fallbackRetryStep = 0;
   bool _running = false;
   bool _pcOnline = false;
@@ -49,6 +50,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     FlutterForegroundTask.removeTaskDataCallback(_onData);
     _fallbackRetryTimer?.cancel();
+    _fallbackHeartbeatTimer?.cancel();
     _fallbackWs?.close();
     _ctrl.dispose();
     super.dispose();
@@ -304,6 +306,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _fallbackWs = ws;
       _fallbackRetryStep = 0;
       ws.add(jsonEncode({'action': 'subscribe', 'target': targetId}));
+      _startFallbackHeartbeat(ws);
       _addEvent('Fallback subscribe ${fmtId(targetId)}');
 
       ws.listen(
@@ -343,6 +346,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 _status = 'Clipboard received';
               });
               _addEvent('Fallback copied ${text.length} chars');
+            } else if (type == 'heartbeat_ack') {
+              return;
             }
           } catch (e) {
             _addEvent('Fallback message error: $e');
@@ -366,6 +371,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _scheduleFallbackReconnect() {
     if (!_running || !_fallbackActive || _targetId.isEmpty) return;
+    _fallbackHeartbeatTimer?.cancel();
     _fallbackRetryTimer?.cancel();
     final delay = nextReconnectDelay(_fallbackRetryStep);
     if (_fallbackRetryStep < kReconnectSteps.length - 1) {
@@ -380,10 +386,25 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _stopFallbackSocket() async {
     _fallbackRetryTimer?.cancel();
     _fallbackRetryTimer = null;
+    _fallbackHeartbeatTimer?.cancel();
+    _fallbackHeartbeatTimer = null;
     _fallbackActive = false;
     _fallbackRetryStep = 0;
     await _fallbackWs?.close();
     _fallbackWs = null;
+  }
+
+  void _startFallbackHeartbeat(WebSocket ws) {
+    _fallbackHeartbeatTimer?.cancel();
+    _fallbackHeartbeatTimer = Timer.periodic(kHeartbeatInterval, (_) {
+      if (!_running || !_fallbackActive || _fallbackWs != ws) return;
+      try {
+        ws.add(jsonEncode({'action': 'heartbeat', 'role': 'phone'}));
+      } catch (e) {
+        _addEvent('Fallback heartbeat error: $e');
+        _scheduleFallbackReconnect();
+      }
+    });
   }
 
   void _addEvent(String line) {

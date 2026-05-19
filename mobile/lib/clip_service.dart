@@ -15,9 +15,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 // - ws://YOUR_VPS_IP:8765
 // - wss://clipsync-relay.onrender.com
 const kRelayUrl = 'wss://clipsync-relay.onrender.com';
-const kAppVersion = '0.7.0+10';
+const kAppVersion = '0.8.0+11';
 const kAuthorName = 'Florentino356';
 const kReconnectSteps = [2, 5, 10, 30, 60];
+const kHeartbeatInterval = Duration(minutes: 10);
 
 String? cleanId(String raw) {
   final value = raw.replaceAll('-', '').trim();
@@ -95,6 +96,7 @@ class ClipTaskHandler extends TaskHandler {
   bool _connecting = false;
   Timer? _retryTimer;
   int _retryStep = 0;
+  int _lastHeartbeatMs = 0;
 
   @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
@@ -120,6 +122,7 @@ class ClipTaskHandler extends TaskHandler {
       _retryStep = 0;
 
       _ws!.add(jsonEncode({'action': 'subscribe', 'target': _targetId}));
+      _lastHeartbeatMs = DateTime.now().millisecondsSinceEpoch;
       _sendDebug('service subscribe sent ${fmtId(_targetId)}');
 
       _ws!.listen(
@@ -173,6 +176,9 @@ class ClipTaskHandler extends TaskHandler {
                 final preview =
                     text.length > 45 ? '${text.substring(0, 45)}...' : text;
                 _setNotification('Clipboard: $preview');
+                break;
+
+              case 'heartbeat_ack':
                 break;
             }
           } catch (e) {
@@ -228,6 +234,18 @@ class ClipTaskHandler extends TaskHandler {
   void onRepeatEvent(DateTime timestamp) {
     if (_ws == null || _ws!.readyState != WebSocket.open) {
       _connect();
+      return;
+    }
+
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (now - _lastHeartbeatMs >= kHeartbeatInterval.inMilliseconds) {
+      _lastHeartbeatMs = now;
+      try {
+        _ws?.add(jsonEncode({'action': 'heartbeat', 'role': 'phone'}));
+      } catch (e) {
+        _sendDebug('service heartbeat error: $e');
+        _retry();
+      }
     }
   }
 

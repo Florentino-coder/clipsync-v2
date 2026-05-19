@@ -2,16 +2,16 @@
   "schema": 1,
   "released_at": "2026-05-20",
   "pc": {
-    "version": "0.7.0",
+    "version": "0.8.0",
     "installer_url": "https://github.com/Florentino-coder/clipsync/releases/download/android-latest/ClipSyncPC_Setup.exe",
     "portable_url": "https://github.com/Florentino-coder/clipsync/releases/download/android-latest/ClipSyncPC.exe",
     "required": false,
-    "notes": "Adds QR pairing, smoother reconnect, update checking, and Windows setup installer."
+    "notes": "Adds relay heartbeat support, stale connection cleanup, and health endpoint support."
   },
   "android": {
-    "version": "0.7.0+10",
+    "version": "0.8.0+11",
     "url": "https://github.com/Florentino-coder/clipsync/releases/download/android-latest/ClipSync.apk",
     "required": false,
-    "notes": "Adds QR pairing, smoother reconnect, and update checking."
+    "notes": "Adds relay heartbeat support for steadier long idle connections."
   }
 }

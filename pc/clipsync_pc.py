@@ -35,7 +35,7 @@ except Exception:  # pragma: no cover - used only when Tk is unavailable.
     ttk = None
 
 APP_NAME = "ClipSync PC"
-APP_VERSION = "0.7.0"
+APP_VERSION = "0.8.0"
 AUTHOR_NAME = "Florentino356"
 DEFAULT_RELAY_URL = "wss://clipsync-relay.onrender.com"
 UPDATE_MANIFEST_URL = (
@@ -44,6 +44,7 @@ UPDATE_MANIFEST_URL = (
 )
 CONFIG_NAME = "clipsync_pc_config.json"
 POLL_INTERVAL_SECONDS = 0.5
+HEARTBEAT_INTERVAL_SECONDS = 10 * 60
 MAX_CLIP_BYTES = 100 * 1024
 RECONNECT_STEPS_SECONDS = (2, 5, 10, 30, 60)
 UPDATE_CHECK_INTERVAL_SECONDS = 24 * 60 * 60
@@ -289,6 +290,7 @@ class ClipSyncClient:
         await asyncio.gather(
             self._ws_loop(generation),
             self._clipboard_loop(generation),
+            self._heartbeat_loop(generation),
         )
 
     async def _ws_loop(self, generation: int) -> None:
@@ -339,12 +341,32 @@ class ClipSyncClient:
             self.phone_count = int(msg.get("phones", 0) or 0)
             self.on_event("registered", {"phones": self.phone_count})
         elif msg_type == "phone_joined":
+            new_count = int(msg.get("count", self.phone_count) or 0)
+            changed = new_count != self.phone_count
+            self.phone_count = new_count
+            self.on_event(
+                "phone_joined" if changed else "phone_count",
+                {"phones": self.phone_count},
+            )
+        elif msg_type == "phone_count":
             self.phone_count = int(msg.get("count", self.phone_count) or 0)
-            self.on_event("phone_joined", {"phones": self.phone_count})
+            self.on_event("phone_count", {"phones": self.phone_count})
+        elif msg_type == "heartbeat_ack":
+            return
         elif msg_type == "kicked":
             self.on_event("kicked", {})
         elif msg.get("error"):
             self.on_event("error", {"message": str(msg.get("error"))})
+
+    async def _heartbeat_loop(self, generation: int) -> None:
+        while self._is_current(generation):
+            await asyncio.sleep(HEARTBEAT_INTERVAL_SECONDS)
+            if not self._is_current(generation) or not self.ws:
+                continue
+            try:
+                await self.ws.send(json.dumps({"action": "heartbeat", "role": "pc"}))
+            except Exception:
+                pass
 
     async def _clipboard_loop(self, generation: int) -> None:
         last = self._read_clipboard()
@@ -627,6 +649,8 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
         elif name == "phone_joined":
             self.phone_count = int(data.get("phones", self.phone_count) or 0)
             self._append_log(f"Phone connected. Total {self.phone_count}")
+        elif name == "phone_count":
+            self.phone_count = int(data.get("phones", self.phone_count) or 0)
         elif name == "clip_sent":
             preview = str(data.get("preview", ""))
             self.last_var.set(f"Last clipboard: {preview}")
@@ -836,6 +860,8 @@ async def run_cli(relay_url: str, pc_id: str) -> None:
             print(f"Sent: {data.get('preview', '')}")
         elif name == "phone_joined":
             print(f"Phone connected. Total {data.get('phones', 0)}")
+        elif name == "phone_count":
+            print(f"Phones connected: {data.get('phones', 0)}")
         elif name == "disconnected":
             print(f"Disconnected: {data.get('message', '')}")
         elif name == "error":
@@ -845,8 +871,9 @@ async def run_cli(relay_url: str, pc_id: str) -> None:
 
     client = ClipSyncClient(relay_url, pc_id, handle_event)
     client.running = True
+    client.generation += 1
     try:
-        await client._run()
+        await client._run(client.generation)
     except KeyboardInterrupt:
         client.stop()
 
