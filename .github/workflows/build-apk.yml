@@ -39,20 +39,20 @@ jobs:
           if [ -d mobile/android/app/src/main/res ]; then
             cp -R mobile/android/app/src/main/res/* mobile_build/android/app/src/main/res/
           fi
-          perl -0pi -e 's/\n    ndkVersion = flutter\.ndkVersion\n/\n/' mobile_build/android/app/build.gradle.kts
+          perl -0pi -e 's/^\s*ndkVersion\s*=\s*flutter\.ndkVersion\s*\n//mg' mobile_build/android/app/build.gradle.kts
 
       - name: Install dependencies
         working-directory: mobile_build
         run: flutter pub get
 
-      - name: Build debug APK
+      - name: Build release APK
         working-directory: mobile_build
-        run: flutter build apk --debug
+        run: flutter build apk --release
 
       - name: Rename APK
         run: |
           mkdir -p artifacts
-          cp mobile_build/build/app/outputs/flutter-apk/app-debug.apk artifacts/ClipSync.apk
+          cp mobile_build/build/app/outputs/flutter-apk/app-release.apk artifacts/ClipSync.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
@@ -135,7 +135,7 @@ jobs:
           token: ${{ github.token }}
           tag: android-latest
           name: ClipSync Test Builds
-          body: Latest APK, Windows EXE, Windows setup installer, and update manifest built from master@${{ github.sha }}.
+          body: Latest release APK, Windows EXE, Windows setup installer, and update manifest built from master@${{ github.sha }}.
           artifacts: release/*
           allowUpdates: true
           removeArtifacts: true
@@ -151,7 +151,7 @@ jobs:
           token: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
           tag: android-latest
           name: ClipSync Android APK
-          body: Latest debug APK built from Florentino-coder/clipsync@${{ github.sha }}.
+          body: Latest release APK built from Florentino-coder/clipsync@${{ github.sha }}.
           commit: main
           artifacts: release/ClipSync.apk
           allowUpdates: true
