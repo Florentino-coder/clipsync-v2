@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "released_at": "2026-05-20",
+  "released_at": "2026-05-23",
   "pc": {
     "version": "0.8.2",
     "installer_url": "https://github.com/Florentino-coder/clipsync/releases/download/android-latest/ClipSyncPC_Setup.exe",
@@ -9,9 +9,9 @@
     "notes": "Fixes the setup launch step by installing the desktop app as a no-temp onedir build."
   },
   "android": {
-    "version": "0.8.1+12",
+    "version": "0.8.2+13",
     "url": "https://github.com/Florentino-coder/clipsync/releases/download/android-latest/ClipSync.apk",
     "required": false,
-    "notes": "Switches the distributed APK to release mode for a much smaller download while keeping the same update link."
+    "notes": "Uses a fixed Android release signing key so future APK updates can install over the previous version."
   }
 }

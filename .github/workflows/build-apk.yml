@@ -41,6 +41,75 @@ jobs:
           fi
           perl -0pi -e 's/^\s*ndkVersion\s*=\s*flutter\.ndkVersion\s*\n//mg' mobile_build/android/app/build.gradle.kts
 
+      - name: Configure Android release signing
+        working-directory: mobile_build
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          test -n "$ANDROID_KEYSTORE_BASE64"
+          test -n "$ANDROID_KEYSTORE_PASSWORD"
+          test -n "$ANDROID_KEY_ALIAS"
+          test -n "$ANDROID_KEY_PASSWORD"
+
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/app/clipsync-upload-keystore.jks
+          cat > android/key.properties <<EOF
+          storeFile=clipsync-upload-keystore.jks
+          storePassword=$ANDROID_KEYSTORE_PASSWORD
+          keyAlias=$ANDROID_KEY_ALIAS
+          keyPassword=$ANDROID_KEY_PASSWORD
+          EOF
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("android/app/build.gradle.kts")
+          text = path.read_text()
+          text = (
+              'import java.util.Properties\n'
+              'import java.io.FileInputStream\n\n'
+              + text
+          )
+          text = text.replace(
+              "android {\n",
+              (
+                  'val keystoreProperties = Properties()\n'
+                  'val keystorePropertiesFile = rootProject.file("key.properties")\n'
+                  'keystoreProperties.load(FileInputStream(keystorePropertiesFile))\n\n'
+                  "android {\n"
+              ),
+              1,
+          )
+          text = text.replace(
+              '''    buildTypes {
+        release {
+            // TODO: Add your own signing config for the release build.
+            // Signing with the debug keys for now, so `flutter run --release` works.
+            signingConfig = signingConfigs.getByName("debug")
+        }
+    }
+''',
+              '''    signingConfigs {
+        create("release") {
+            keyAlias = keystoreProperties["keyAlias"] as String
+            keyPassword = keystoreProperties["keyPassword"] as String
+            storeFile = file(keystoreProperties["storeFile"] as String)
+            storePassword = keystoreProperties["storePassword"] as String
+        }
+    }
+
+    buildTypes {
+        release {
+            signingConfig = signingConfigs.getByName("release")
+        }
+    }
+''',
+          )
+          path.write_text(text)
+          PY
+
       - name: Install dependencies
         working-directory: mobile_build
         run: flutter pub get
