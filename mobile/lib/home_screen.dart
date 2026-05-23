@@ -870,7 +870,6 @@ class _QrScanScreenState extends State<QrScanScreen>
     autoStart: false,
     detectionSpeed: DetectionSpeed.noDuplicates,
     formats: const [BarcodeFormat.qrCode],
-    useNewCameraSelector: true,
   );
   bool _done = false;
   bool _starting = true;
