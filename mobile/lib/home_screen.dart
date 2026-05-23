@@ -958,7 +958,7 @@ class _QrScanScreenState extends State<QrScanScreen>
                 MobileScanner(
                   controller: _controller,
                   onDetect: _onDetect,
-                  placeholderBuilder: (context, child) {
+                  placeholderBuilder: (context) {
                     return _CameraMessage(
                       icon: Icons.camera_alt_outlined,
                       title: 'Starting camera',
@@ -966,7 +966,7 @@ class _QrScanScreenState extends State<QrScanScreen>
                       showProgress: true,
                     );
                   },
-                  errorBuilder: (context, error, child) {
+                  errorBuilder: (context, error) {
                     return _CameraMessage(
                       icon: Icons.videocam_off_rounded,
                       title: 'Camera unavailable',
