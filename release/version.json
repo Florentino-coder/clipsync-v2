@@ -9,9 +9,9 @@
     "notes": "Fixes the setup launch step by installing the desktop app as a no-temp onedir build."
   },
   "android": {
-    "version": "0.8.3+14",
+    "version": "0.8.4+15",
     "url": "https://github.com/Florentino-coder/clipsync/releases/download/android-latest/ClipSync.apk",
     "required": false,
-    "notes": "Version-only update test for the fixed Android release signing flow."
+    "notes": "Improves QR scanner startup, lifecycle handling, and camera error recovery in release builds."
   }
 }

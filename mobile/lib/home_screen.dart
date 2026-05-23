@@ -864,16 +864,73 @@ class QrScanScreen extends StatefulWidget {
   State<QrScanScreen> createState() => _QrScanScreenState();
 }
 
-class _QrScanScreenState extends State<QrScanScreen> {
+class _QrScanScreenState extends State<QrScanScreen>
+    with WidgetsBindingObserver {
   final _controller = MobileScannerController(
+    autoStart: false,
     detectionSpeed: DetectionSpeed.noDuplicates,
+    formats: const [BarcodeFormat.qrCode],
+    useNewCameraSelector: true,
   );
   bool _done = false;
+  bool _starting = true;
+  String _cameraStatus = 'Starting camera...';
+  MobileScannerException? _cameraError;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _startCamera();
+    });
+  }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    unawaited(_controller.stop());
     _controller.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (_done) return;
+    if (state == AppLifecycleState.resumed) {
+      _startCamera();
+    } else if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      unawaited(_controller.stop());
+    }
+  }
+
+  Future<void> _startCamera() async {
+    if (!mounted || _done) return;
+    setState(() {
+      _starting = true;
+      _cameraStatus = 'Starting camera...';
+      _cameraError = null;
+    });
+
+    try {
+      await _controller.stop();
+      await Future<void>.delayed(const Duration(milliseconds: 180));
+      await _controller.start();
+      if (!mounted || _done) return;
+      setState(() {
+        _starting = false;
+        _cameraStatus = 'Point the camera at the QR on ClipSync PC.';
+      });
+    } catch (e) {
+      if (!mounted || _done) return;
+      setState(() {
+        _starting = false;
+        _cameraStatus = 'Camera could not start. Tap Retry.';
+        _cameraError = e is MobileScannerException ? e : null;
+      });
+    }
   }
 
   void _onDetect(BarcodeCapture capture) {
@@ -883,6 +940,7 @@ class _QrScanScreenState extends State<QrScanScreen> {
     if (id == null) return;
 
     _done = true;
+    unawaited(_controller.stop());
     Navigator.of(context).pop(id);
   }
 
@@ -901,6 +959,26 @@ class _QrScanScreenState extends State<QrScanScreen> {
                 MobileScanner(
                   controller: _controller,
                   onDetect: _onDetect,
+                  placeholderBuilder: (context, child) {
+                    return _CameraMessage(
+                      icon: Icons.camera_alt_outlined,
+                      title: 'Starting camera',
+                      message: _cameraStatus,
+                      showProgress: true,
+                    );
+                  },
+                  errorBuilder: (context, error, child) {
+                    return _CameraMessage(
+                      icon: Icons.videocam_off_rounded,
+                      title: 'Camera unavailable',
+                      message: _scannerErrorMessage(error),
+                      action: FilledButton.icon(
+                        onPressed: _startCamera,
+                        icon: const Icon(Icons.refresh_rounded),
+                        label: const Text('Retry'),
+                      ),
+                    );
+                  },
                 ),
                 Container(
                   width: 238,
@@ -910,6 +988,30 @@ class _QrScanScreenState extends State<QrScanScreen> {
                     borderRadius: BorderRadius.circular(8),
                   ),
                 ),
+                if (_starting)
+                  Positioned(
+                    bottom: 18,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.62),
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 7,
+                        ),
+                        child: Text(
+                          _cameraStatus,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -921,7 +1023,105 @@ class _QrScanScreenState extends State<QrScanScreen> {
               style: TextStyle(color: cs.onSurfaceVariant),
             ),
           ),
+          if (_cameraError != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
+              child: Text(
+                _scannerErrorMessage(_cameraError!),
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: cs.error,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
         ],
+      ),
+    );
+  }
+
+  String _scannerErrorMessage(MobileScannerException error) {
+    final details = error.errorDetails?.message;
+    if (details != null && details.trim().isNotEmpty) {
+      return details.trim();
+    }
+    switch (error.errorCode.name) {
+      case 'permissionDenied':
+        return 'Camera permission is required. Enable Camera permission in Android Settings and tap Retry.';
+      case 'controllerDisposed':
+        return 'The camera was closed. Go back and open Scan PC QR again.';
+      default:
+        return 'Camera error: ${error.errorCode.name}. Tap Retry or enter the PC ID manually.';
+    }
+  }
+}
+
+class _CameraMessage extends StatelessWidget {
+  const _CameraMessage({
+    required this.icon,
+    required this.title,
+    required this.message,
+    this.action,
+    this.showProgress = false,
+  });
+
+  final IconData icon;
+  final String title;
+  final String message;
+  final Widget? action;
+  final bool showProgress;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+
+    return ColoredBox(
+      color: Colors.black,
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, color: Colors.white, size: 36),
+              const SizedBox(height: 12),
+              Text(
+                title,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                message,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.72),
+                  fontSize: 13,
+                ),
+              ),
+              if (showProgress) ...[
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: 22,
+                  height: 22,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.4,
+                    color: cs.primary,
+                  ),
+                ),
+              ],
+              if (action != null) ...[
+                const SizedBox(height: 16),
+                action!,
+              ],
+            ],
+          ),
+        ),
       ),
     );
   }
