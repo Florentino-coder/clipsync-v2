@@ -864,72 +864,31 @@ class QrScanScreen extends StatefulWidget {
   State<QrScanScreen> createState() => _QrScanScreenState();
 }
 
-class _QrScanScreenState extends State<QrScanScreen>
-    with WidgetsBindingObserver {
-  final _controller = MobileScannerController(
-    autoStart: false,
+class _QrScanScreenState extends State<QrScanScreen> {
+  late MobileScannerController _controller = _newController();
+  var _scannerKey = 0;
+  bool _done = false;
+
+  MobileScannerController _newController() => MobileScannerController(
     detectionSpeed: DetectionSpeed.noDuplicates,
     formats: const [BarcodeFormat.qrCode],
   );
-  bool _done = false;
-  bool _starting = true;
-  String _cameraStatus = 'Starting camera...';
-  MobileScannerException? _cameraError;
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _startCamera();
-    });
-  }
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    unawaited(_controller.stop());
-    _controller.dispose();
+    unawaited(_controller.dispose());
     super.dispose();
   }
 
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (_done) return;
-    if (state == AppLifecycleState.resumed) {
-      _startCamera();
-    } else if (state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.paused ||
-        state == AppLifecycleState.hidden) {
-      unawaited(_controller.stop());
-    }
-  }
-
-  Future<void> _startCamera() async {
+  Future<void> _resetCamera() async {
     if (!mounted || _done) return;
-    setState(() {
-      _starting = true;
-      _cameraStatus = 'Starting camera...';
-      _cameraError = null;
-    });
 
-    try {
-      await _controller.stop();
-      await Future<void>.delayed(const Duration(milliseconds: 180));
-      await _controller.start();
-      if (!mounted || _done) return;
-      setState(() {
-        _starting = false;
-        _cameraStatus = 'Point the camera at the QR on ClipSync PC.';
-      });
-    } catch (e) {
-      if (!mounted || _done) return;
-      setState(() {
-        _starting = false;
-        _cameraStatus = 'Camera could not start. Tap Retry.';
-        _cameraError = e is MobileScannerException ? e : null;
-      });
-    }
+    final oldController = _controller;
+    setState(() {
+      _controller = _newController();
+      _scannerKey += 1;
+    });
+    unawaited(oldController.dispose());
   }
 
   void _onDetect(BarcodeCapture capture) {
@@ -956,13 +915,14 @@ class _QrScanScreenState extends State<QrScanScreen>
               alignment: Alignment.center,
               children: [
                 MobileScanner(
+                  key: ValueKey(_scannerKey),
                   controller: _controller,
                   onDetect: _onDetect,
                   placeholderBuilder: (context) {
                     return _CameraMessage(
                       icon: Icons.camera_alt_outlined,
                       title: 'Starting camera',
-                      message: _cameraStatus,
+                      message: 'Point the camera at the QR on ClipSync PC.',
                       showProgress: true,
                     );
                   },
@@ -972,7 +932,7 @@ class _QrScanScreenState extends State<QrScanScreen>
                       title: 'Camera unavailable',
                       message: _scannerErrorMessage(error),
                       action: FilledButton.icon(
-                        onPressed: _startCamera,
+                        onPressed: _resetCamera,
                         icon: const Icon(Icons.refresh_rounded),
                         label: const Text('Retry'),
                       ),
@@ -987,30 +947,6 @@ class _QrScanScreenState extends State<QrScanScreen>
                     borderRadius: BorderRadius.circular(8),
                   ),
                 ),
-                if (_starting)
-                  Positioned(
-                    bottom: 18,
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.62),
-                        borderRadius: BorderRadius.circular(18),
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 7,
-                        ),
-                        child: Text(
-                          _cameraStatus,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
               ],
             ),
           ),
@@ -1022,19 +958,6 @@ class _QrScanScreenState extends State<QrScanScreen>
               style: TextStyle(color: cs.onSurfaceVariant),
             ),
           ),
-          if (_cameraError != null)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
-              child: Text(
-                _scannerErrorMessage(_cameraError!),
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: cs.error,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
         ],
       ),
     );
