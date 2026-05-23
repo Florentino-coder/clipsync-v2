@@ -101,6 +101,8 @@ jobs:
               "\n"
               "    buildTypes {\n"
               "        release {\n"
+              "            isMinifyEnabled = false\n"
+              "            isShrinkResources = false\n"
               "            signingConfig = signingConfigs.getByName(\"release\")\n"
               "        }\n"
               "    }\n",
