@@ -9,9 +9,9 @@
     "notes": "Fixes the setup launch step by installing the desktop app as a no-temp onedir build."
   },
   "android": {
-    "version": "0.8.8+19",
+    "version": "0.8.9+20",
     "url": "https://github.com/Florentino-coder/clipsync/releases/download/android-latest/ClipSync.apk",
     "required": false,
-    "notes": "Builds the Android release APK with native minification and resource shrinking explicitly disabled while keeping the simplified QR camera lifecycle."
+    "notes": "Re-enables Android release shrinking with app-level keep rules for CameraX, ML Kit, mobile_scanner, and foreground service."
   }
 }

@@ -40,6 +40,36 @@ jobs:
             cp -R mobile/android/app/src/main/res/* mobile_build/android/app/src/main/res/
           fi
           perl -0pi -e 's/^\s*ndkVersion\s*=\s*flutter\.ndkVersion\s*\n//mg' mobile_build/android/app/build.gradle.kts
+          cat > mobile_build/android/app/proguard-rules.pro <<'EOF'
+          # Flutter runtime and plugin entry points.
+          -keep class io.flutter.** { *; }
+          -dontwarn io.flutter.embedding.**
+
+          # ClipSync plugins that are called through Android platform channels.
+          -keep class dev.steenbakker.mobile_scanner.** { *; }
+          -keep class com.pravera.flutter_foreground_task.** { *; }
+
+          # CameraX and barcode scanning are sensitive to R8 trimming on some devices.
+          -keep class androidx.camera.** { *; }
+          -dontwarn androidx.camera.**
+          -keep class com.google.mlkit.** { *; }
+          -keep class com.google.android.gms.internal.mlkit_vision_barcode.** { *; }
+          -keep class com.google.android.libraries.barhopper.** { *; }
+          -keep class com.google.android.odml.image.** { *; }
+          -keep class com.google.photos.** { *; }
+          -dontwarn com.google.mlkit.**
+          -dontwarn com.google.android.gms.**
+
+          # Keep metadata used by reflection and generated native bindings.
+          -keepattributes *Annotation*
+          -keepattributes Signature
+          -keepattributes InnerClasses,EnclosingMethod
+          -keepclassmembers class * extends java.lang.Enum {
+              <fields>;
+              public static **[] values();
+              public static ** valueOf(java.lang.String);
+          }
+          EOF
 
       - name: Configure Android release signing
         working-directory: mobile_build
@@ -101,8 +131,12 @@ jobs:
               "\n"
               "    buildTypes {\n"
               "        release {\n"
-              "            isMinifyEnabled = false\n"
-              "            isShrinkResources = false\n"
+              "            isMinifyEnabled = true\n"
+              "            isShrinkResources = true\n"
+              "            proguardFiles(\n"
+              "                getDefaultProguardFile(\"proguard-android-optimize.txt\"),\n"
+              "                \"proguard-rules.pro\",\n"
+              "            )\n"
               "            signingConfig = signingConfigs.getByName(\"release\")\n"
               "        }\n"
               "    }\n",
