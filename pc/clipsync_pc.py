@@ -20,6 +20,7 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+import ctypes
 from pathlib import Path
 from typing import Any, Callable
 
@@ -35,7 +36,7 @@ except Exception:  # pragma: no cover - used only when Tk is unavailable.
     ttk = None
 
 APP_NAME = "ClipSync PC"
-APP_VERSION = "0.8.2"
+APP_VERSION = "0.8.3"
 AUTHOR_NAME = "Florentino356"
 DEFAULT_RELAY_URL = "wss://clipsync-relay.onrender.com"
 UPDATE_MANIFEST_URL = (
@@ -43,7 +44,7 @@ UPDATE_MANIFEST_URL = (
     "android-latest/version.json"
 )
 CONFIG_NAME = "clipsync_pc_config.json"
-POLL_INTERVAL_SECONDS = 0.5
+POLL_INTERVAL_SECONDS = 0.05
 HEARTBEAT_INTERVAL_SECONDS = 10 * 60
 MAX_CLIP_BYTES = 100 * 1024
 RECONNECT_STEPS_SECONDS = (2, 5, 10, 30, 60)
@@ -370,8 +371,25 @@ class ClipSyncClient:
 
     async def _clipboard_loop(self, generation: int) -> None:
         last = self._read_clipboard()
+        is_win = sys.platform.startswith("win")
+        last_seq = 0
+        if is_win:
+            try:
+                last_seq = ctypes.windll.user32.GetClipboardSequenceNumber()
+            except Exception:
+                is_win = False
+
         while self._is_current(generation):
             await asyncio.sleep(POLL_INTERVAL_SECONDS)
+            if is_win:
+                try:
+                    current_seq = ctypes.windll.user32.GetClipboardSequenceNumber()
+                    if current_seq == last_seq:
+                        continue
+                    last_seq = current_seq
+                except Exception:
+                    pass
+
             now = self._read_clipboard()
             if not now or now == last:
                 continue
