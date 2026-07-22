@@ -103,7 +103,62 @@ def validate_profile(raw: Mapping[str, Any]) -> dict[str, Any]:
     if profile["click_wait_max_ms"] < 0:
         raise ValueError("click_wait_max_ms must be >= 0")
 
+    if "api" in profile:
+        profile["api"] = _validate_api_block(profile["api"])
+
+    if "close_job_workflow" in profile:
+        profile["close_job_workflow"] = _validate_close_job_workflow(
+            profile["close_job_workflow"]
+        )
+
     return profile
+
+
+def _validate_api_endpoint(raw: Any, path: str) -> dict[str, Any]:
+    _expect_type(raw, dict, path)
+    endpoint = deepcopy(dict(raw))
+    if "method" in endpoint:
+        _expect_type(endpoint["method"], str, f"{path}.method")
+    if "url_template" in endpoint:
+        _expect_type(endpoint["url_template"], str, f"{path}.url_template")
+    if "payload_template" in endpoint:
+        _expect_type(endpoint["payload_template"], dict, f"{path}.payload_template")
+    if "fields_map" in endpoint:
+        _expect_type(endpoint["fields_map"], dict, f"{path}.fields_map")
+        for key, value in endpoint["fields_map"].items():
+            _expect_type(key, str, f"{path}.fields_map key")
+            _expect_type(value, str, f"{path}.fields_map.{key}")
+    return endpoint
+
+
+def _validate_api_block(raw: Any) -> dict[str, Any]:
+    """Optional in-session API adapter block (Task 4.3b)."""
+    _expect_type(raw, dict, "api")
+    api = deepcopy(dict(raw))
+    if "enabled" not in api:
+        api["enabled"] = False
+    _expect_type(api["enabled"], bool, "api.enabled")
+    if "list_pending" in api:
+        api["list_pending"] = _validate_api_endpoint(api["list_pending"], "api.list_pending")
+    if "approve" in api:
+        api["approve"] = _validate_api_endpoint(api["approve"], "api.approve")
+    return api
+
+
+def _validate_close_job_workflow(raw: Any) -> list[dict[str, Any]]:
+    """Optional multi-step DOM close-job workflow (Task 4.5)."""
+    _expect_type(raw, list, "close_job_workflow")
+    steps: list[dict[str, Any]] = []
+    allowed = {"click", "wait_for", "select_option", "verify_or_fill", "verify_result"}
+    for i, step in enumerate(raw):
+        path = f"close_job_workflow[{i}]"
+        _expect_type(step, dict, path)
+        action = step.get("action")
+        _expect_type(action, str, f"{path}.action")
+        if action not in allowed:
+            raise ValueError(f"{path}.action must be one of {sorted(allowed)}")
+        steps.append(deepcopy(dict(step)))
+    return steps
 
 
 def _load_profile_file(path: Path) -> dict[str, Any]:

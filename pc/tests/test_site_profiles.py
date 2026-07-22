@@ -147,3 +147,48 @@ def test_example_extension_profile_loads():
     assert profiles[0]["profile_id"] == "example_synthetic_v1"
     assert profiles[0]["dry_run"] is True
     assert profiles[0]["domain_patterns"]
+    assert profiles[0]["api"]["enabled"] is True
+    assert "withdrawal-approve-search" in profiles[0]["api"]["list_pending"]["url_template"]
+    assert "TODO" in profiles[0]["api"]["approve"]["url_template"]
+    assert profiles[0]["close_job_workflow"][0]["action"] == "click"
+
+
+def test_validate_optional_api_block():
+    validated = validate_profile(
+        _valid_profile(
+            api={
+                "enabled": True,
+                "list_pending": {
+                    "method": "GET",
+                    "url_template": "/bo/withdrawal-approve-search?start_date={today}",
+                    "fields_map": {"order_id": "id", "amount": "amount"},
+                },
+                "approve": {
+                    "method": "POST",
+                    "url_template": "TODO(HAR): partner approve endpoint unknown",
+                    "payload_template": {},
+                },
+            }
+        )
+    )
+    assert validated["api"]["enabled"] is True
+    assert validated["api"]["approve"]["url_template"].startswith("TODO")
+
+
+def test_validate_optional_close_job_workflow():
+    validated = validate_profile(
+        _valid_profile(
+            close_job_workflow=[
+                {"action": "click", "match_text": "ยืนยัน"},
+                {"action": "wait_for", "timeout_ms": 1000},
+            ]
+        )
+    )
+    assert len(validated["close_job_workflow"]) == 2
+
+
+def test_validate_rejects_unknown_workflow_action():
+    with pytest.raises(ValueError, match="action"):
+        validate_profile(
+            _valid_profile(close_job_workflow=[{"action": "explode"}])
+        )
