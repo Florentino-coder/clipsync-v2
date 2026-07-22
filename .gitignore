@@ -15,3 +15,5 @@ mobile_build/
 release/android-signing/
 
 tools/
+
+.worktrees/
