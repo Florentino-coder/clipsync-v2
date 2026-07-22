@@ -8,13 +8,14 @@ Synthetic fixtures and stub API adapters are in place until partner recon is com
 |------|--------|-------|
 | Partner permission letter | **BLOCKED** | Written approval that automation may click admin UI on behalf of staff |
 | Real customer domain | **BLOCKED** | Replace `admin.example.invalid` in profiles with production admin URL |
-| HAR approve endpoint | **BLOCKED** | DevTools recon: click through close-job flow once, capture POST approve endpoint + payload |
+| HAR approve endpoint | **BLOCKED** | **Open Item:** partner HAR required for `api.approve` — capture POST URL + payload/headers (CSRF) once via DevTools while closing one real job |
 
 ## What works with stubs today
 
 - Text-anchor engine tests run against `fixtures/order_list.html`
 - Workflow engine tests run against `fixtures/close_job_popup.html`
-- API adapter `list_pending` uses recon URL template; `approve` returns stub until HAR is captured
+- API adapter `list_pending` fetches with `credentials: 'include'` using recon URL template
+- `api.approve` is stubbed (`TODO(HAR)` / `approve_endpoint_todo`) until partner HAR arrives — DOM `close_job_workflow` is the fallback
 
 ## Unblock checklist
 

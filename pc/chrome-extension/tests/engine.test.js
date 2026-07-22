@@ -61,7 +61,7 @@ const WORKFLOW_PROFILE = {
       value_from: 'slip.account_number',
     },
     { action: 'click', scope: 'popup', match_text: 'ยืนยัน|บันทึก|ตกลง' },
-    { action: 'verify_result', indicators: ['สำเร็จ', 'success'], timeout_ms: 5000 },
+    { action: 'verify_result', indicators: ['ปิดงานสำเร็จ'], timeout_ms: 5000 },
   ],
 };
 
@@ -215,6 +215,29 @@ describe('runWorkflow', () => {
     assert.equal(submit.getAttribute('data-clipsync-dry-run'), '1');
   });
 
+  it('completes success path when dry_run is false', async () => {
+    const profile = { ...WORKFLOW_PROFILE, dry_run: false };
+    const rowResult = findRow(profile, 'WD1001');
+    assert.equal(rowResult.status, 'ok');
+
+    const result = await runWorkflow(
+      profile,
+      profile.close_job_workflow,
+      {
+        row: rowResult.row,
+        slip: { bank_name_th: 'ไทยพาณิชย์', account_number: '1234567890' },
+      },
+      { dry_run: false }
+    );
+
+    assert.equal(result.ok, true);
+    assert.equal(result.verified, true);
+    assert.equal(document.querySelector('#status-select').value, 'success');
+    assert.match(document.querySelector('.dropdown-toggle').textContent, /ไทยพาณิชย์/);
+    assert.equal(document.querySelector('input[name="account_number"]').value, '1234567890');
+    assert.match(document.querySelector('.result-banner').textContent, /ปิดงานสำเร็จ/);
+  });
+
   it('fail-fast when popup missing on wait_for', async () => {
     document.querySelector('.modal').remove();
     const rowResult = findRow(WORKFLOW_PROFILE, 'WD1001');
@@ -229,5 +252,23 @@ describe('runWorkflow', () => {
     assert.equal(result.ok, false);
     assert.equal(result.failed_step, 1);
     assert.equal(result.reason, 'wait_for_timeout');
+  });
+
+  it('fail-fast on account mismatch (pending_review)', async () => {
+    const profile = { ...WORKFLOW_PROFILE, dry_run: false };
+    document.querySelector('input[name="account_number"]').value = '9999999999';
+    const rowResult = findRow(profile, 'WD1001');
+    const result = await runWorkflow(
+      profile,
+      profile.close_job_workflow,
+      {
+        row: rowResult.row,
+        slip: { bank_name_th: 'ไทยพาณิชย์', account_number: '1234567890' },
+      },
+      { dry_run: false }
+    );
+    assert.equal(result.ok, false);
+    assert.equal(result.failed_step, 4);
+    assert.equal(result.reason, 'pending_review');
   });
 });

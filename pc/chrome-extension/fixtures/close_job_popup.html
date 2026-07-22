@@ -50,8 +50,26 @@
         <input type="text" name="account_number" value="" />
       </label>
       <div class="amount-display">Amount: 2,500.00</div>
-      <button type="button" class="submit-btn">ยืนยัน</button>
+      <button type="button" class="submit-btn" onclick="(function(btn){var b=btn.parentElement.querySelector('.result-banner');b.hidden=false;b.textContent='ปิดงานสำเร็จ';})(this)">ยืนยัน</button>
+      <div class="result-banner" hidden></div>
     </div>
   </div>
+  <script>
+    (function () {
+      var toggle = document.querySelector('.dropdown-toggle');
+      var menu = document.querySelector('.dropdown-menu');
+      if (toggle && menu) {
+        toggle.addEventListener('click', function () {
+          menu.hidden = !menu.hidden;
+        });
+        menu.querySelectorAll('li').forEach(function (li) {
+          li.addEventListener('click', function () {
+            toggle.textContent = li.textContent;
+            menu.hidden = true;
+          });
+        });
+      }
+    })();
+  </script>
 </body>
 </html>
