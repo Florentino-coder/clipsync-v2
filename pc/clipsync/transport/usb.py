@@ -122,6 +122,12 @@ class UsbTransport:
         except websockets.ConnectionClosed:
             logger.debug("USB WebSocket closed for %s", self._phone_ip)
 
+    async def send_ack(self, event_id: str) -> None:
+        """Send ``{"type":"slip_ack","event_id":...}`` to the phone over USB WS."""
+        if not event_id or self._ws is None:
+            return
+        await self._ws.send(json.dumps({"type": "slip_ack", "event_id": event_id}))
+
     async def fetch_slips(self, date_from: datetime, date_to: datetime) -> list[dict[str, Any]]:
         url = f"http://{self._phone_ip}:{self._port}/slips"
         params = {"from": date_from.isoformat(), "to": date_to.isoformat()}

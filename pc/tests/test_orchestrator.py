@@ -328,3 +328,79 @@ def test_callback_exceptions_are_swallowed(tmp_path: Path):
     # call wrappers that must never raise even with odd payloads.
     orch.on_pending_orders(None)  # type: ignore[arg-type]
     orch.on_confirm_result({"orderId": object()})  # type: ignore[dict-item]
+
+
+@pytest.mark.asyncio
+async def test_handle_slip_event_invokes_send_ack(tmp_path: Path):
+    """PC must emit slip_ack (via send_ack) after processing a new slip."""
+    acked: list[str] = []
+    bridge = MagicMock()
+    bridge.push_confirm_order = AsyncMock()
+    orch = SlipOrchestrator(
+        CFG,
+        chrome_bridge=bridge,
+        shared_secret=SECRET,
+        audit_path=tmp_path / "audit.jsonl",
+        seen_events_path=tmp_path / "seen_events.json",
+        used_refs_path=tmp_path / "used_refs.json",
+        confirm_timeout=0.2,
+        send_ack=lambda event_id: acked.append(event_id),
+    )
+    orch.on_pending_orders(
+        {
+            "type": "pending_orders",
+            "orders": [{"orderId": "1234", "amount": 350.0, "accountLast4": "6789"}],
+        }
+    )
+
+    async def _reply() -> None:
+        await asyncio.sleep(0.02)
+        orch.on_confirm_result(
+            {"type": "confirm_result", "orderId": "1234", "ok": True, "reason": None}
+        )
+
+    t = asyncio.create_task(_reply())
+    result = await orch.handle_slip_event(EVENT, source="usb")
+    await t
+
+    assert result["decision"] == "auto_confirmed"
+    assert acked == ["evt-001"]
+
+
+@pytest.mark.asyncio
+async def test_duplicate_event_still_invokes_send_ack(tmp_path: Path):
+    """Duplicates must still ack so the phone can markSent and stop resending."""
+    acked: list[str] = []
+    bridge = MagicMock()
+    bridge.push_confirm_order = AsyncMock()
+    orch = SlipOrchestrator(
+        CFG,
+        chrome_bridge=bridge,
+        shared_secret=SECRET,
+        audit_path=tmp_path / "audit.jsonl",
+        seen_events_path=tmp_path / "seen_events.json",
+        used_refs_path=tmp_path / "used_refs.json",
+        confirm_timeout=0.2,
+        send_ack=lambda event_id: acked.append(event_id),
+    )
+    orch.on_pending_orders(
+        {
+            "type": "pending_orders",
+            "orders": [{"orderId": "1234", "amount": 350.0, "accountLast4": "6789"}],
+        }
+    )
+
+    async def _reply() -> None:
+        await asyncio.sleep(0.02)
+        orch.on_confirm_result(
+            {"type": "confirm_result", "orderId": "1234", "ok": True, "reason": None}
+        )
+
+    t = asyncio.create_task(_reply())
+    await orch.handle_slip_event(EVENT, source="usb")
+    await t
+    acked.clear()
+
+    result = await orch.handle_slip_event(EVENT, source="usb")
+    assert result["decision"] == "duplicate"
+    assert acked == ["evt-001"]

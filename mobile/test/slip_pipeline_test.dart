@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:clipsync_app/slip/outbox.dart';
 import 'package:clipsync_app/slip/slip_event.dart';
 import 'package:clipsync_app/slip/slip_ocr.dart';
 import 'package:clipsync_app/slip/slip_pipeline.dart';
@@ -231,5 +232,36 @@ void main() {
     expect(streamError, isNull);
     expect(received, hasLength(1));
     expect(ocr.seenPaths, ['/data/user/0/com.clipsync/good.jpg']);
+  });
+
+  test('optional outbox is enqueued when slip is ready', () async {
+    final raw = File('test/fixtures/scb_01.txt').readAsStringSync();
+    final sent = <Map<String, dynamic>>[];
+    final outbox = SlipOutbox(
+      store: store,
+      sharedSecret: 'test-secret-key-32chars!!!!!!!!',
+      send: (message) async {
+        sent.add(Map<String, dynamic>.from(message));
+      },
+    );
+    final pipeline = SlipPipeline(
+      ocr: FakeSlipOcr(raw, confidence: 0.92),
+      store: store,
+      outbox: outbox,
+    );
+
+    final result = await pipeline.processWatcherEvent({
+      'path': '/data/user/0/com.clipsync/slip.jpg',
+      'date_added': 1721638800,
+    });
+
+    expect(result, isNotNull);
+    expect(sent, hasLength(1));
+    expect(sent.first['type'], 'slip_event');
+    expect(sent.first['payload']['event_id'], result!.eventId);
+    expect(
+      (await store.unsent()).map((e) => e.eventId),
+      [result.eventId],
+    );
   });
 }

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime, timezone
 from unittest.mock import patch
 
@@ -232,3 +233,19 @@ def test_usb_transport_is_reachable_uses_probe():
     )
     assert transport.is_reachable() is True
     assert UsbTransport("192.168.187.2", SECRET, probe_phone=lambda _ip: False).is_reachable() is False
+
+
+@pytest.mark.asyncio
+async def test_usb_send_ack_emits_slip_ack_frame():
+    transport = UsbTransport("192.168.187.1", SECRET, probe_phone=lambda _ip: True)
+    sent: list[str] = []
+
+    class _FakeWs:
+        async def send(self, data: str) -> None:
+            sent.append(data)
+
+    transport._ws = _FakeWs()  # noqa: SLF001 — unit-test seam
+    await transport.send_ack("evt-ack-1")
+
+    assert len(sent) == 1
+    assert json.loads(sent[0]) == {"type": "slip_ack", "event_id": "evt-ack-1"}

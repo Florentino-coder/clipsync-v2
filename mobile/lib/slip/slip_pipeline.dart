@@ -1,5 +1,6 @@
 import 'package:uuid/uuid.dart';
 
+import 'outbox.dart';
 import 'parsers/parser_registry.dart';
 import 'slip_content_uri.dart';
 import 'slip_event.dart';
@@ -15,6 +16,9 @@ typedef ContentUriCopier = Future<String> Function(String contentUri);
 /// Layer 1 on phone = ML Kit Latin only. Thai name verification is optional
 /// PC-side Layer 2 (EasyOCR) — see `pc/clipsync/thai_ocr.py` in a later task.
 /// TODO: Do not block this mobile pipeline on Thai OCR / EasyOCR.
+///
+/// Full home-screen / relay UI wiring is deferred; pass [outbox] (or set
+/// [onSlipReady]) at the integration point under test / when transport is ready.
 class SlipPipeline {
   SlipPipeline({
     required SlipOcr ocr,
@@ -22,21 +26,31 @@ class SlipPipeline {
     SlipWatcher? watcher,
     Uuid? uuid,
     ContentUriCopier? contentUriCopier,
+    SlipOutbox? outbox,
+    this.outboxForRelay = false,
   })  : _ocr = ocr,
         _store = store,
         _watcher = watcher ?? SlipWatcher(),
         _uuid = uuid ?? const Uuid(),
-        _contentUriCopier = contentUriCopier ?? SlipContentUri.copyToCache;
+        _contentUriCopier = contentUriCopier ?? SlipContentUri.copyToCache,
+        _outbox = outbox;
 
   final SlipOcr _ocr;
   final SlipStore _store;
   final SlipWatcher _watcher;
   final Uuid _uuid;
   final ContentUriCopier _contentUriCopier;
+  final SlipOutbox? _outbox;
+
+  /// When true and [outbox] is set, enqueue attaches relay HMAC (`forRelay`).
+  final bool outboxForRelay;
 
   /// Called after a slip is OCR'd, parsed, and saved.
-  /// TODO(Task 2.4): wire this hook to the outbox / PC relay — not implemented yet.
+  /// When null and [outbox] is set, [SlipOutbox.enqueue] is used instead.
   Future<void> Function(SlipEvent event)? onSlipReady;
+
+  /// Optional outbox used for reliable delivery (may be null in unit tests).
+  SlipOutbox? get outbox => _outbox;
 
   SlipWatcher get watcher => _watcher;
 
@@ -73,7 +87,11 @@ class SlipPipeline {
     );
 
     await _store.save(slipEvent);
-    await onSlipReady?.call(slipEvent);
+    if (onSlipReady != null) {
+      await onSlipReady!(slipEvent);
+    } else if (_outbox != null) {
+      await _outbox!.enqueue(slipEvent, forRelay: outboxForRelay);
+    }
     return slipEvent;
   }
 

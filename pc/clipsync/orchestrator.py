@@ -8,19 +8,18 @@ import hmac
 import json
 import logging
 from pathlib import Path
-from typing import Any, Mapping, MutableMapping, Optional
+from typing import Any, Awaitable, Callable, Mapping, MutableMapping, Optional
 
 from clipsync.audit import append_audit
 from clipsync.config import user_data_dir
 from clipsync.matcher import load_used_refs, match_order, save_used_refs, should_auto_confirm
+from clipsync.seen_events import SeenEvents, default_seen_events_path
 
 logger = logging.getLogger(__name__)
 
 CONFIRM_TIMEOUT_DEFAULT = 15.0
 
-
-def default_seen_events_path() -> Path:
-    return user_data_dir() / "seen_events.json"
+SendAckCallback = Callable[[str], Awaitable[None] | None]
 
 
 def default_used_refs_path() -> Path:
@@ -41,24 +40,15 @@ def _verify_slip_payload_sig(
     return hmac.compare_digest(expected, sig)
 
 
+# Backwards-compatible helpers — same on-disk format as SeenEvents.
 def load_seen_events(path: Path | str) -> set[str]:
-    p = Path(path)
-    if not p.exists():
-        return set()
-    raw = json.loads(p.read_text(encoding="utf-8"))
-    if isinstance(raw, list):
-        return {str(x) for x in raw}
-    if isinstance(raw, dict) and "event_ids" in raw:
-        return {str(x) for x in raw["event_ids"]}
-    raise ValueError(f"unsupported seen_events format in {p}")
+    return SeenEvents(path=path).event_ids
 
 
 def save_seen_events(event_ids: set[str], path: Path | str) -> None:
-    """Persist as ``{"event_ids": [...]}`` (compatible with SeenEvents module)."""
-    p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"event_ids": sorted({str(x) for x in event_ids})}
-    p.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    """Persist as ``{"event_ids": [...]}`` (SeenEvents format)."""
+    seen = SeenEvents(path=path)
+    seen.replace_all(event_ids)
 
 
 def _normalize_order(order: Mapping[str, Any]) -> dict[str, Any]:
@@ -91,28 +81,39 @@ class SlipOrchestrator:
         seen_events_path: Optional[Path | str] = None,
         used_refs_path: Optional[Path | str] = None,
         confirm_timeout: float = CONFIRM_TIMEOUT_DEFAULT,
+        send_ack: Optional[SendAckCallback] = None,
+        seen_events: Optional[SeenEvents] = None,
     ) -> None:
         self._cfg: MutableMapping[str, Any] = dict(cfg)
         self._bridge = chrome_bridge
         self._shared_secret = shared_secret
         self._audit_path = Path(audit_path) if audit_path is not None else None
-        self._seen_path = (
-            Path(seen_events_path)
-            if seen_events_path is not None
-            else default_seen_events_path()
-        )
         self._used_refs_path = (
             Path(used_refs_path) if used_refs_path is not None else default_used_refs_path()
         )
         self._confirm_timeout = float(confirm_timeout)
+        self._send_ack = send_ack
 
-        self._seen: set[str] = load_seen_events(self._seen_path)
+        if seen_events is not None:
+            self._seen = seen_events
+        else:
+            path = (
+                Path(seen_events_path)
+                if seen_events_path is not None
+                else default_seen_events_path()
+            )
+            self._seen = SeenEvents(path=path)
+
         self._used_refs: set[str] = load_used_refs(self._used_refs_path)
         self._pending_orders: list[dict[str, Any]] = []
         self._confirm_waiters: dict[str, asyncio.Future[dict[str, Any]]] = {}
 
     def update_config(self, cfg: Mapping[str, Any]) -> None:
         self._cfg = dict(cfg)
+
+    def set_send_ack(self, send_ack: Optional[SendAckCallback]) -> None:
+        """Attach/replace the phone ack callback (USB or relay transport)."""
+        self._send_ack = send_ack
 
     def on_pending_orders(self, data: Mapping[str, Any] | None) -> None:
         """Chrome-bridge callback — must never raise (keeps WS alive)."""
@@ -145,6 +146,13 @@ class SlipOrchestrator:
         except Exception:
             logger.exception("on_confirm_result failed")
 
+    async def _emit_ack(self, event_id: str) -> None:
+        if not event_id or self._send_ack is None:
+            return
+        result = self._send_ack(event_id)
+        if asyncio.iscoroutine(result):
+            await result
+
     async def handle_slip_event(
         self,
         event: Mapping[str, Any],
@@ -156,24 +164,29 @@ class SlipOrchestrator:
         if not event_id:
             return self._audit_and_return(event, None, "rejected", confirmed_by=None)
 
-        if event_id in self._seen:
+        if self._seen.is_duplicate(event_id):
+            await self._emit_ack(event_id)
             return {"decision": "duplicate", "event_id": event_id, "order_id": None}
 
         if source == "relay":
             if not _verify_slip_payload_sig(self._shared_secret, event, sig or ""):
-                return self._audit_and_return(event, None, "rejected", confirmed_by=None)
+                # Still ack so the phone stops resending a rejected payload.
+                result = self._audit_and_return(event, None, "rejected", confirmed_by=None)
+                await self._emit_ack(event_id)
+                return result
 
-        self._seen.add(event_id)
-        save_seen_events(self._seen, self._seen_path)
+        self._seen.mark(event_id)
 
         matched = match_order(
             event, self._pending_orders, self._cfg, used_refs=self._used_refs
         )
 
         if not should_auto_confirm(event, matched, self._cfg):
-            return self._audit_and_return(
+            result = self._audit_and_return(
                 event, matched, "pending_review", confirmed_by=None
             )
+            await self._emit_ack(event_id)
+            return result
 
         assert matched is not None
         order_id = str(matched["order_id"])
@@ -185,21 +198,27 @@ class SlipOrchestrator:
             try:
                 result = await asyncio.wait_for(fut, timeout=self._confirm_timeout)
             except asyncio.TimeoutError:
-                return self._audit_and_return(
+                out = self._audit_and_return(
                     event, matched, "confirm_failed", confirmed_by=None
                 )
+                await self._emit_ack(event_id)
+                return out
 
             if result.get("ok"):
                 ref = event.get("ref_number")
                 if ref is not None:
                     self._used_refs.add(str(ref))
                     save_used_refs(self._used_refs, self._used_refs_path)
-                return self._audit_and_return(
+                out = self._audit_and_return(
                     event, matched, "auto_confirmed", confirmed_by="system"
                 )
-            return self._audit_and_return(
+                await self._emit_ack(event_id)
+                return out
+            out = self._audit_and_return(
                 event, matched, "confirm_failed", confirmed_by=None
             )
+            await self._emit_ack(event_id)
+            return out
         finally:
             self._confirm_waiters.pop(order_id, None)
 

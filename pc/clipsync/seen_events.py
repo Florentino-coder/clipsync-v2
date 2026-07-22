@@ -28,6 +28,15 @@ class SeenEvents:
     def path(self) -> Path:
         return self._path
 
+    @property
+    def event_ids(self) -> set[str]:
+        return set(self._ids)
+
+    def replace_all(self, event_ids: set[str]) -> None:
+        """Replace the in-memory set and persist (compat helper)."""
+        self._ids = {str(x) for x in event_ids if x}
+        self.save()
+
     def load(self) -> None:
         if not self._path.exists():
             self._ids = set()

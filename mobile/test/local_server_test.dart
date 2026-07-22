@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:clipsync_app/slip/local_server.dart';
+import 'package:clipsync_app/slip/outbox.dart';
 import 'package:clipsync_app/slip/slip_event.dart';
 import 'package:clipsync_app/slip/slip_store.dart';
 import 'package:crypto/crypto.dart';
@@ -204,5 +205,94 @@ void main() {
 
     await channel.sink.close();
     await channel.ready;
+  });
+
+  test('WebSocket slip_ack is forwarded to outbox.handleIncoming', () async {
+    final imageFile =
+        await _createTestImage('${tempDir.path}/slip-ack.png');
+    final event = _sampleEvent(
+      eventId: 'evt-ack',
+      capturedAt: '2026-07-22T15:00:00+07:00',
+      imagePath: imageFile.path,
+    );
+    await store.save(event, sent: false);
+
+    final sent = <Map<String, dynamic>>[];
+    final outbox = SlipOutbox(
+      store: store,
+      sharedSecret: _sharedSecret,
+      send: (message) async {
+        sent.add(Map<String, dynamic>.from(message));
+      },
+    );
+    await server.stop();
+    server = LocalSlipServer(store, _sharedSecret, outbox: outbox);
+    await server.start(port: 0);
+    port = server.port;
+
+    final channel = WebSocketChannel.connect(
+      Uri.parse('ws://127.0.0.1:$port/'),
+    );
+    channel.sink.add(jsonEncode({
+      'type': 'auth',
+      'token': _authHeader(_sharedSecret),
+    }));
+    await expectLater(
+      channel.stream.first,
+      completion(jsonEncode({'type': 'auth_ok'})),
+    );
+
+    channel.sink.add(jsonEncode({
+      'type': 'slip_ack',
+      'event_id': 'evt-ack',
+    }));
+
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    expect(await store.unsent(), isEmpty);
+
+    await channel.sink.close();
+  });
+
+  test('WebSocket auth triggers outbox.onReconnect', () async {
+    final imageFile =
+        await _createTestImage('${tempDir.path}/slip-reconnect.png');
+    final event = _sampleEvent(
+      eventId: 'evt-reconnect',
+      capturedAt: '2026-07-22T16:00:00+07:00',
+      imagePath: imageFile.path,
+    );
+    await store.save(event, sent: false);
+
+    final sent = <Map<String, dynamic>>[];
+    final outbox = SlipOutbox(
+      store: store,
+      sharedSecret: _sharedSecret,
+      send: (message) async {
+        sent.add(Map<String, dynamic>.from(message));
+      },
+    );
+    await server.stop();
+    server = LocalSlipServer(store, _sharedSecret, outbox: outbox);
+    await server.start(port: 0);
+    port = server.port;
+
+    final channel = WebSocketChannel.connect(
+      Uri.parse('ws://127.0.0.1:$port/'),
+    );
+    channel.sink.add(jsonEncode({
+      'type': 'auth',
+      'token': _authHeader(_sharedSecret),
+    }));
+    await expectLater(
+      channel.stream.first,
+      completion(jsonEncode({'type': 'auth_ok'})),
+    );
+
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    expect(sent, isNotEmpty);
+    expect(sent.first['type'], 'slip_event');
+    expect(sent.first['payload']['event_id'], 'evt-reconnect');
+
+    await channel.sink.close();
   });
 }

@@ -8,6 +8,7 @@ import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_web_socket/shelf_web_socket.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import 'outbox.dart';
 import 'slip_event.dart';
 import 'slip_store.dart';
 
@@ -16,11 +17,17 @@ import 'slip_store.dart';
 /// `/ping` is intentionally **unauthenticated** so PC USB discovery can probe
 /// for ClipSync without a shared secret. All other HTTP routes and WebSocket
 /// connections require HMAC auth via [authToken] / `X-Auth` header.
+///
+/// When [outbox] is set: inbound `slip_ack` → [SlipOutbox.handleIncoming], and
+/// successful WS auth → [SlipOutbox.onReconnect]. Full home-screen wiring may
+/// still construct the outbox and pass it here when USB transport is active.
 class LocalSlipServer {
-  LocalSlipServer(this.store, this.sharedSecret);
+  LocalSlipServer(this.store, this.sharedSecret, {SlipOutbox? outbox})
+      : _outbox = outbox;
 
   final SlipStore store;
   final String sharedSecret;
+  final SlipOutbox? _outbox;
 
   static const maxImagesPerRequest = 50;
   static const defaultPort = 8790;
@@ -71,7 +78,7 @@ class LocalSlipServer {
       var authed = false;
 
       webSocket.stream.listen(
-        (message) {
+        (message) async {
           if (!authed) {
             try {
               final decoded = jsonDecode(message as String);
@@ -81,6 +88,10 @@ class LocalSlipServer {
                 authed = true;
                 _wsClients.add(webSocket);
                 webSocket.sink.add(jsonEncode({'type': 'auth_ok'}));
+                final outbox = _outbox;
+                if (outbox != null) {
+                  await outbox.onReconnect();
+                }
                 return;
               }
             } catch (_) {
@@ -92,7 +103,20 @@ class LocalSlipServer {
             return;
           }
 
-          // Stub: authenticated clients may send acks or other messages later.
+          final outbox = _outbox;
+          if (outbox == null) {
+            return;
+          }
+          try {
+            final decoded = jsonDecode(message as String);
+            if (decoded is Map<String, dynamic>) {
+              await outbox.handleIncoming(decoded);
+            } else if (decoded is Map) {
+              await outbox.handleIncoming(Map<String, dynamic>.from(decoded));
+            }
+          } catch (_) {
+            // Ignore malformed inbound frames.
+          }
         },
         onDone: () {
           _wsClients.remove(webSocket);
