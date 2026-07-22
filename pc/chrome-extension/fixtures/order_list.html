@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <!--
+    Synthetic order-list fixture (Task 4.0 stub).
+    TODO: Replace with sanitized partner HTML snapshot once permission + domain are available.
+  -->
+  <title>Synthetic admin orders</title>
+</head>
+<body>
+  <div class="order-list">
+    <table>
+      <thead>
+        <tr>
+          <th>Ref</th>
+          <th>Amount</th>
+          <th>Status</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="order-row" data-id="ORD1001">
+          <td>ORD1001</td>
+          <td>1,250.00</td>
+          <td>pending</td>
+          <td><button type="button">Confirm</button></td>
+        </tr>
+        <tr class="order-row" data-id="ORD2002">
+          <td>ORD2002</td>
+          <td>500.00</td>
+          <td>confirmed</td>
+          <td><span>confirmed</span></td>
+        </tr>
+        <tr class="order-row" data-id="ORD3003">
+          <td>ORD3003</td>
+          <td>75.50</td>
+          <td>pending</td>
+          <td><button type="button" disabled>Confirm</button></td>
+        </tr>
+        <tr class="order-row" data-id="DUP-A">
+          <td>DUP0001</td>
+          <td>10.00</td>
+          <td>pending</td>
+          <td><button type="button">Confirm</button></td>
+        </tr>
+        <tr class="order-row" data-id="DUP-B">
+          <td>DUP0001</td>
+          <td>20.00</td>
+          <td>pending</td>
+          <td><button type="button">Confirm</button></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</body>
+</html>

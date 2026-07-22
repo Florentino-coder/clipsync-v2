@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <!--
+    Synthetic close-job popup fixture (Task 4.0 stub).
+    TODO: Replace with sanitized partner popup snapshot from HAR recon.
+  -->
+  <title>Synthetic close-job workflow</title>
+</head>
+<body>
+  <div class="order-list">
+    <table>
+      <tbody>
+        <tr class="order-row" data-id="WD1001">
+          <td>WD1001</td>
+          <td>2,500.00</td>
+          <td>pending</td>
+          <td>
+            <button type="button" class="eye-btn" title="View">👁</button>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="modal popup" role="dialog" aria-hidden="false">
+    <div class="modal-content">
+      <h2>Close withdrawal</h2>
+      <label>
+        Status
+        <select id="status-select">
+          <option value="">-- select --</option>
+          <option value="success">สำเร็จ</option>
+          <option value="reject">ปฏิเสธ</option>
+        </select>
+      </label>
+      <label>
+        ธนาคาร
+        <div class="custom-dropdown bank-dropdown">
+          <button type="button" class="dropdown-toggle">เลือกธนาคาร</button>
+          <ul class="dropdown-menu" hidden>
+            <li data-value="scb">ไทยพาณิชย์</li>
+            <li data-value="kbank">กสิกรไทย</li>
+          </ul>
+        </div>
+      </label>
+      <label>
+        เลขบัญชี
+        <input type="text" name="account_number" value="" />
+      </label>
+      <div class="amount-display">Amount: 2,500.00</div>
+      <button type="button" class="submit-btn">ยืนยัน</button>
+    </div>
+  </div>
+</body>
+</html>
