@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
+import tempfile
+import urllib.error
+import urllib.request
+import zipfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import pyperclip
 
@@ -25,6 +30,11 @@ _LOAD_HINT = (
     "Enable Developer mode, then click Load unpacked and select the folder "
     "path copied to your clipboard."
 )
+_RELOAD_HINT = (
+    "Extension updated. Open chrome://extensions and click Reload on ClipSync."
+)
+
+FetchBytesFn = Callable[[str], bytes]
 
 
 def app_base_dir() -> Path:
@@ -108,6 +118,63 @@ def is_newer_version(latest: str, current: str) -> bool:
     return _parse_version(latest) > _parse_version(current)
 
 
+def _default_fetch_bytes(url: str) -> bytes:
+    req = urllib.request.Request(url, headers={"User-Agent": "ClipSyncPC/1.0"})
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        return resp.read()
+
+
+def _resolve_extract_source(extracted: Path) -> Path:
+    nested = extracted / EXTENSION_DIRNAME
+    if nested.is_dir() and (nested / MANIFEST_NAME).is_file():
+        return nested
+    if (extracted / MANIFEST_NAME).is_file():
+        return extracted
+    for child in extracted.iterdir():
+        if child.is_dir() and (child / MANIFEST_NAME).is_file():
+            return child
+    raise ValueError("extension zip has no manifest.json")
+
+
+def extract_extension_zip(zip_source: bytes | Path, target_dir: Path) -> Path:
+    """Extract extension zip bytes/path into ``target_dir`` (chrome-extension folder)."""
+    target = Path(target_dir)
+    if target.name != EXTENSION_DIRNAME:
+        target = target / EXTENSION_DIRNAME
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        if isinstance(zip_source, bytes):
+            zip_path = tmp_path / "extension.zip"
+            zip_path.write_bytes(zip_source)
+        else:
+            zip_path = Path(zip_source)
+
+        extract_root = tmp_path / "extracted"
+        extract_root.mkdir()
+        with zipfile.ZipFile(zip_path) as archive:
+            archive.extractall(extract_root)
+
+        source = _resolve_extract_source(extract_root)
+        if target.exists():
+            shutil.rmtree(target)
+        shutil.copytree(source, target)
+    return target
+
+
+def notify_extension_reload(message: str | None = None) -> str:
+    msg = message or _RELOAD_HINT
+    if tk is not None and messagebox is not None:  # pragma: no cover
+        try:
+            root = tk.Tk()
+            root.withdraw()
+            messagebox.showinfo("ClipSync Extension Update", msg)
+            root.destroy()
+        except Exception:
+            pass
+    return msg
+
+
 def default_version_json_path(base: Path | None = None) -> Path:
     root = Path(base) if base is not None else app_base_dir()
     # Prefer repo-root release/ next to pc/, then pc/release/.
@@ -121,10 +188,33 @@ def default_version_json_path(base: Path | None = None) -> Path:
     return candidates[0]
 
 
+def _update_result(
+    *,
+    update_available: bool,
+    local_version: str,
+    remote_version: str | None,
+    download_path: str | None,
+    download_note: str | None,
+    message: str,
+    needs_reload: bool = False,
+) -> dict[str, Any]:
+    return {
+        "update_available": update_available,
+        "local_version": local_version,
+        "remote_version": remote_version,
+        "download_path": download_path,
+        "download_note": download_note,
+        "needs_reload": needs_reload,
+        "message": message,
+    }
+
+
 def check_extension_update(
     *,
     version_json_path: Path | None = None,
     extension_path: Path | None = None,
+    apply: bool = False,
+    fetch_bytes: FetchBytesFn | None = None,
 ) -> dict[str, Any]:
     """Compare release/version.json extension.version vs local manifest.json."""
     ext_path = Path(extension_path) if extension_path is not None else extension_dir()
@@ -136,28 +226,28 @@ def check_extension_update(
         else default_version_json_path(base=ext_path.parent)
     )
     if not vpath.is_file():
-        return {
-            "update_available": False,
-            "local_version": local_version,
-            "remote_version": None,
-            "download_path": None,
-            "download_note": None,
-            "message": f"No release version file at {vpath}",
-        }
+        return _update_result(
+            update_available=False,
+            local_version=local_version,
+            remote_version=None,
+            download_path=None,
+            download_note=None,
+            message=f"No release version file at {vpath}",
+        )
 
     data = json.loads(vpath.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise ValueError("version.json is invalid")
     ext_info = data.get("extension")
     if not isinstance(ext_info, dict):
-        return {
-            "update_available": False,
-            "local_version": local_version,
-            "remote_version": None,
-            "download_path": None,
-            "download_note": None,
-            "message": "version.json has no extension section",
-        }
+        return _update_result(
+            update_available=False,
+            local_version=local_version,
+            remote_version=None,
+            download_path=None,
+            download_note=None,
+            message="version.json has no extension section",
+        )
 
     remote_version = str(ext_info.get("version", "")).strip()
     download_url = str(
@@ -168,14 +258,14 @@ def check_extension_update(
     ).strip()
 
     if not remote_version or not is_newer_version(remote_version, local_version):
-        return {
-            "update_available": False,
-            "local_version": local_version,
-            "remote_version": remote_version or local_version,
-            "download_path": download_url or None,
-            "download_note": None,
-            "message": f"Extension is up to date ({local_version}).",
-        }
+        return _update_result(
+            update_available=False,
+            local_version=local_version,
+            remote_version=remote_version or local_version,
+            download_path=download_url or None,
+            download_note=None,
+            message=f"Extension is up to date ({local_version}).",
+        )
 
     if download_url:
         download_note = f"Download update from: {download_url}"
@@ -188,14 +278,46 @@ def check_extension_update(
         )
         download_path = None
 
-    return {
-        "update_available": True,
-        "local_version": local_version,
-        "remote_version": remote_version,
-        "download_path": download_path,
-        "download_note": download_note,
-        "message": (
+    if apply and download_url:
+        try:
+            fetch = fetch_bytes or _default_fetch_bytes
+            zip_bytes = fetch(download_url)
+            extract_extension_zip(zip_bytes, ext_path)
+            updated_version = local_manifest_version(ext_path)
+            reload_msg = notify_extension_reload()
+            return _update_result(
+                update_available=True,
+                local_version=updated_version,
+                remote_version=remote_version,
+                download_path=download_path,
+                download_note=download_note,
+                needs_reload=True,
+                message=(
+                    f"Extension updated: {local_version} -> {updated_version}. "
+                    f"{reload_msg}"
+                ),
+            )
+        except (OSError, urllib.error.URLError, ValueError, zipfile.BadZipFile) as exc:
+            return _update_result(
+                update_available=True,
+                local_version=local_version,
+                remote_version=remote_version,
+                download_path=download_path,
+                download_note=download_note,
+                message=(
+                    f"Extension update available: {local_version} -> {remote_version}. "
+                    f"Apply failed: {exc}"
+                ),
+            )
+
+    return _update_result(
+        update_available=True,
+        local_version=local_version,
+        remote_version=remote_version,
+        download_path=download_path,
+        download_note=download_note,
+        message=(
             f"Extension update available: {local_version} -> {remote_version}. "
             f"{download_note}"
         ),
-    }
+    )

@@ -13,5 +13,9 @@
     "url": "https://github.com/Florentino-coder/clipsync/releases/download/android-latest/ClipSync.apk",
     "required": false,
     "notes": "Re-enables Android release shrinking with app-level keep rules for CameraX, ML Kit, mobile_scanner, and foreground service."
+  },
+  "extension": {
+    "version": "1.0.0",
+    "download_url": ""
   }
 }

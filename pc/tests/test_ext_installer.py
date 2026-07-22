@@ -2,13 +2,32 @@
 
 from __future__ import annotations
 
+import io
 import json
+import zipfile
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
 from clipsync import ext_installer
+
+
+def _make_extension_zip(version: str) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr(
+            "manifest.json",
+            json.dumps(
+                {
+                    "manifest_version": 3,
+                    "name": "ClipSync Auto Confirm",
+                    "version": version,
+                }
+            ),
+        )
+        archive.writestr("background.js", "// updated")
+    return buffer.getvalue()
 
 
 @pytest.fixture
@@ -132,6 +151,7 @@ def test_check_extension_update_detects_newer_release(
     assert result["update_available"] is True
     assert result["local_version"] == "1.0.0"
     assert result["remote_version"] == "1.1.0"
+    assert result["needs_reload"] is False
     assert "TODO" in result["download_note"]
     assert "1.1.0" in result["message"]
 
@@ -153,6 +173,7 @@ def test_check_extension_update_up_to_date(tmp_path: Path, extension_tree: Path)
     assert result["update_available"] is False
     assert result["local_version"] == "1.0.0"
     assert result["remote_version"] == "1.0.0"
+    assert result["needs_reload"] is False
 
 
 def test_check_extension_update_notes_download_url(tmp_path: Path, extension_tree: Path):
@@ -179,4 +200,62 @@ def test_check_extension_update_notes_download_url(tmp_path: Path, extension_tre
 
     assert result["update_available"] is True
     assert result["download_path"] == url
+    assert result["needs_reload"] is False
     assert url in result["download_note"]
+
+
+def test_check_extension_update_apply_downloads_extracts_and_needs_reload(
+    tmp_path: Path, extension_tree: Path, monkeypatch: pytest.MonkeyPatch
+):
+    release = tmp_path / "release"
+    release.mkdir()
+    version_json = release / "version.json"
+    url = "https://example.com/ext-1.2.0.zip"
+    version_json.write_text(
+        json.dumps(
+            {
+                "extension": {
+                    "version": "1.2.0",
+                    "download_url": url,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    zip_bytes = _make_extension_zip("1.2.0")
+    monkeypatch.setattr(ext_installer, "tk", None)
+    monkeypatch.setattr(
+        ext_installer,
+        "notify_extension_reload",
+        lambda message=None: message or ext_installer._RELOAD_HINT,
+    )
+
+    result = ext_installer.check_extension_update(
+        version_json_path=version_json,
+        extension_path=extension_tree,
+        apply=True,
+        fetch_bytes=lambda _url: zip_bytes,
+    )
+
+    assert result["update_available"] is True
+    assert result["needs_reload"] is True
+    assert result["local_version"] == "1.2.0"
+    assert ext_installer.local_manifest_version(extension_tree) == "1.2.0"
+    assert (extension_tree / "background.js").read_text(encoding="utf-8") == "// updated"
+    assert "Reload" in result["message"]
+
+
+def test_extract_extension_zip_supports_nested_folder(tmp_path: Path):
+    zip_bytes = io.BytesIO()
+    with zipfile.ZipFile(zip_bytes, "w") as archive:
+        archive.writestr(
+            "chrome-extension/manifest.json",
+            json.dumps({"manifest_version": 3, "version": "9.9.9"}),
+        )
+    target = tmp_path / "chrome-extension"
+    target.mkdir()
+    (target / "manifest.json").write_text('{"version":"1.0.0"}', encoding="utf-8")
+
+    ext_installer.extract_extension_zip(zip_bytes.getvalue(), target)
+
+    assert ext_installer.local_manifest_version(target) == "9.9.9"
