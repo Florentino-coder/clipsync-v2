@@ -1,11 +1,16 @@
 # -*- mode: python ; coding: utf-8 -*-
+from pathlib import Path
 
+_spec_dir = Path(SPECPATH)
+_datas = [('assets\\clipsync_icon.png', 'assets')]
+if (_spec_dir / 'chrome-extension' / 'manifest.json').is_file():
+    _datas.append(('chrome-extension', 'chrome-extension'))
 
 a = Analysis(
     ['clipsync_pc.py'],
     pathex=[],
     binaries=[],
-    datas=[('assets\\clipsync_icon.png', 'assets')],
+    datas=_datas,
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
