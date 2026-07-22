@@ -2,6 +2,7 @@ package com.clipsync.mobile_build
 
 import android.content.ContentResolver
 import android.content.ContentUris
+import android.content.Context
 import android.database.ContentObserver
 import android.net.Uri
 import android.os.Handler
@@ -9,18 +10,57 @@ import android.os.Looper
 import android.provider.MediaStore
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.EventChannel
+import io.flutter.plugin.common.MethodCall
+import io.flutter.plugin.common.MethodChannel
+import java.io.File
+import java.io.IOException
 
-class SlipObserverPlugin : FlutterPlugin, EventChannel.StreamHandler {
+class SlipObserverPlugin : FlutterPlugin, EventChannel.StreamHandler,
+    MethodChannel.MethodCallHandler {
     private var observer: ContentObserver? = null
     private var resolver: ContentResolver? = null
+    private var appContext: Context? = null
+    private var methodChannel: MethodChannel? = null
     private var lastId: Long = -1
 
     // folder ของแอปธนาคาร — ปรับตามเครื่องจริงตอน Gate 1
     private val bankBuckets = setOf("SCB Easy", "KPLUS", "Bualuang mBanking", "Screenshots")
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+        appContext = binding.applicationContext
         resolver = binding.applicationContext.contentResolver
         EventChannel(binding.binaryMessenger, "clipsync/slip_events").setStreamHandler(this)
+        methodChannel = MethodChannel(binding.binaryMessenger, "clipsync/slip_methods").also {
+            it.setMethodCallHandler(this)
+        }
+    }
+
+    override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
+        when (call.method) {
+            "copyContentUriToCache" -> {
+                val uriString = call.arguments as? String
+                if (uriString.isNullOrBlank()) {
+                    result.error("bad_args", "uriString required", null)
+                    return
+                }
+                try {
+                    result.success(copyContentUriToCache(uriString))
+                } catch (e: Exception) {
+                    result.error("copy_failed", e.message, null)
+                }
+            }
+            else -> result.notImplemented()
+        }
+    }
+
+    private fun copyContentUriToCache(uriString: String): String {
+        val context = appContext ?: throw IllegalStateException("plugin not attached")
+        val uri = Uri.parse(uriString)
+        val outFile = File(context.cacheDir, "slip_${System.currentTimeMillis()}.jpg")
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            outFile.outputStream().use { output -> input.copyTo(output) }
+        } ?: throw IOException("Cannot open $uriString")
+        return outFile.absolutePath
     }
 
     override fun onListen(args: Any?, events: EventChannel.EventSink?) {
@@ -77,7 +117,10 @@ class SlipObserverPlugin : FlutterPlugin, EventChannel.StreamHandler {
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         unregisterObserver()
+        methodChannel?.setMethodCallHandler(null)
+        methodChannel = null
         resolver = null
+        appContext = null
     }
 
     private fun unregisterObserver() {

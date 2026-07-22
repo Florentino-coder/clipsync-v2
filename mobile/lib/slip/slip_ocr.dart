@@ -54,7 +54,7 @@ class MlKitSlipOcr implements SlipOcr {
     }
 
     if (confidences.isEmpty) {
-      return 1.0;
+      return 0.0;
     }
 
     return confidences.reduce((a, b) => a + b) / confidences.length;

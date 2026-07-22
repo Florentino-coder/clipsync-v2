@@ -184,7 +184,11 @@ void main() {
     );
 
     final received = <SlipEvent>[];
-    final sub = pipeline.watchAndProcess().listen(received.add);
+    Object? streamError;
+    final sub = pipeline.watchAndProcess().listen(
+      received.add,
+      onError: (Object error) => streamError = error,
+    );
 
     controller.add({}); // missing path/uri → null
     controller.add({
@@ -195,8 +199,37 @@ void main() {
     await controller.close();
     await sub.cancel();
 
+    expect(streamError, isNull);
     expect(received, hasLength(1));
     expect(received.single.bank, 'SCB');
+    expect(ocr.seenPaths, ['/data/user/0/com.clipsync/good.jpg']);
+  });
+
+  test('watchAndProcess skips content URI copy failures', () async {
+    final controller = StreamController<Map<String, dynamic>>();
+    final ocr = FakeSlipOcr(File('test/fixtures/scb_01.txt').readAsStringSync());
+    final pipeline = SlipPipeline(
+      ocr: ocr,
+      store: store,
+      watcher: FakeSlipWatcher(controller),
+      contentUriCopier: (_) async => throw StateError('copy failed'),
+    );
+
+    final received = <SlipEvent>[];
+    Object? streamError;
+    final sub = pipeline.watchAndProcess().listen(
+      received.add,
+      onError: (Object error) => streamError = error,
+    );
+
+    controller.add({'uri': 'content://media/external/images/media/bad'});
+    controller.add({'path': '/data/user/0/com.clipsync/good.jpg'});
+    await Future<void>.delayed(Duration.zero);
+    await controller.close();
+    await sub.cancel();
+
+    expect(streamError, isNull);
+    expect(received, hasLength(1));
     expect(ocr.seenPaths, ['/data/user/0/com.clipsync/good.jpg']);
   });
 }

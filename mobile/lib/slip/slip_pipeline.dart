@@ -1,6 +1,7 @@
 import 'package:uuid/uuid.dart';
 
 import 'parsers/parser_registry.dart';
+import 'slip_content_uri.dart';
 import 'slip_event.dart';
 import 'slip_ocr.dart';
 import 'slip_store.dart';
@@ -25,13 +26,13 @@ class SlipPipeline {
         _store = store,
         _watcher = watcher ?? SlipWatcher(),
         _uuid = uuid ?? const Uuid(),
-        _contentUriCopier = contentUriCopier;
+        _contentUriCopier = contentUriCopier ?? SlipContentUri.copyToCache;
 
   final SlipOcr _ocr;
   final SlipStore _store;
   final SlipWatcher _watcher;
   final Uuid _uuid;
-  final ContentUriCopier? _contentUriCopier;
+  final ContentUriCopier _contentUriCopier;
 
   /// Called after a slip is OCR'd, parsed, and saved.
   /// TODO(Task 2.4): wire this hook to the outbox / PC relay — not implemented yet.
@@ -87,15 +88,15 @@ class SlipPipeline {
 
     final contentUri = _pickContentUri(path, uri);
     if (contentUri != null) {
-      final copier = _contentUriCopier;
-      if (copier != null) {
-        return copier(contentUri);
+      try {
+        return await _contentUriCopier(contentUri);
+      } catch (_) {
+        // Skip unreadable content URIs so one bad event does not kill the stream.
+        return null;
       }
-      // TODO: provide a default Android content-resolver copy for production.
-      return contentUri;
     }
 
-    if (uri is String && uri.isNotEmpty) {
+    if (uri is String && uri.isNotEmpty && !_isContentUri(uri)) {
       return uri;
     }
 
