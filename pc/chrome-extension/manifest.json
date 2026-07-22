@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "ClipSync Auto Confirm",
+  "version": "1.0.0",
+  "description": "Site-profile driven order confirm for ClipSync (localhost bridge).",
+  "permissions": ["storage", "alarms"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "ClipSync",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content-script.js"],
+      "all_frames": true,
+      "run_at": "document_idle"
+    }
+  ]
+}

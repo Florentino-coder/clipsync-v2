@@ -1,0 +1,15 @@
+{
+  "profile_id": "example_synthetic_v1",
+  "domain_patterns": ["https://admin.example.invalid/*"],
+  "order_page_url_hint": "/orders",
+  "row_selector_hints": ["tr", "[class*='order']", "[class*='row']", "li", "[class*='card']"],
+  "confirm_keywords": ["ยืนยัน", "confirm", "อนุมัติ", "approve", "สำเร็จ"],
+  "already_confirmed_indicators": ["ยืนยันแล้ว", "confirmed", "สำเร็จแล้ว", "approved"],
+  "logout_indicators": ["form[action*='login']", "input[type='password']"],
+  "order_list_canary_selector": "table, [class*='order-list'], [class*='order']",
+  "uses_iframe": false,
+  "dry_run": true,
+  "post_click_verify_timeout_ms": 15000,
+  "click_wait_max_ms": 30000,
+  "_todo": "Task 4.0 BLOCKED: replace with real customer HAR/HTML fixture + domain when partner snapshot is available"
+}

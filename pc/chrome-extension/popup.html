@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>ClipSync</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f7f4ef;
+        --ink: #1c1917;
+        --muted: #78716c;
+        --line: #d6d3d1;
+        --accent: #0f766e;
+        --warn: #b45309;
+      }
+      body {
+        margin: 0;
+        min-width: 320px;
+        font: 13px/1.4 "Segoe UI", system-ui, sans-serif;
+        color: var(--ink);
+        background: var(--bg);
+      }
+      main {
+        padding: 12px 14px 14px;
+        display: grid;
+        gap: 12px;
+      }
+      h1 {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 650;
+      }
+      label {
+        display: grid;
+        gap: 4px;
+        font-weight: 600;
+      }
+      input[type="text"],
+      input[type="password"] {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 6px 8px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        font: inherit;
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .status {
+        font-weight: 600;
+        color: var(--accent);
+      }
+      .status[data-state="disconnected"],
+      .status[data-state="error"],
+      .status[data-state="needs_token"],
+      .status[data-state="auth_failed"] {
+        color: var(--warn);
+      }
+      button {
+        border: 1px solid var(--line);
+        background: #fff;
+        border-radius: 6px;
+        padding: 6px 10px;
+        font: inherit;
+        cursor: pointer;
+      }
+      button.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #fff;
+      }
+      ul {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 8px;
+      }
+      li {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 8px;
+        background: #fff;
+        display: grid;
+        gap: 6px;
+      }
+      .muted {
+        color: var(--muted);
+        font-weight: 400;
+      }
+      .toggle {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-weight: 500;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="row">
+        <h1>ClipSync</h1>
+        <span id="status" class="status" data-state="disconnected">disconnected</span>
+      </div>
+
+      <label>
+        Pairing token
+        <input id="token" type="password" autocomplete="off" spellcheck="false" />
+      </label>
+      <div class="row">
+        <button id="saveToken" class="primary" type="button">Save &amp; connect</button>
+        <span class="muted">WS :8765</span>
+      </div>
+
+      <section>
+        <div class="row">
+          <strong>Profiles</strong>
+          <span id="profileCount" class="muted">0</span>
+        </div>
+        <ul id="profileList"></ul>
+        <p id="emptyProfiles" class="muted">No profiles yet — PC pushes type site_profiles.</p>
+      </section>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

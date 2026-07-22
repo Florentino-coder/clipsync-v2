@@ -66,6 +66,23 @@ async def test_push_confirm_order_reaches_authenticated_client(bridge: ChromeBri
         assert json.loads(raw) == {"type": "confirm_order", "orderId": "1234"}
 
 
+async def test_push_site_profiles_reaches_authenticated_client(bridge: ChromeBridge):
+    from clipsync.site_profiles import default_profile
+
+    profile = default_profile(profile_id="pushed_v1")
+    uri = f"ws://127.0.0.1:{bridge.port}"
+    async with websockets.connect(uri) as ws:
+        await ws.send(json.dumps({"type": "auth", "token": TOKEN}))
+        assert json.loads(await ws.recv())["type"] == "auth_success"
+
+        await bridge.push_site_profiles([profile])
+        raw = await asyncio.wait_for(ws.recv(), timeout=2)
+        msg = json.loads(raw)
+        assert msg["type"] == "site_profiles"
+        assert msg["profiles"][0]["profile_id"] == "pushed_v1"
+        assert msg["profiles"][0]["dry_run"] is True
+
+
 async def test_unauthenticated_client_receives_nothing_on_push(bridge: ChromeBridge):
     uri = f"ws://127.0.0.1:{bridge.port}"
     async with websockets.connect(uri) as unauth:
