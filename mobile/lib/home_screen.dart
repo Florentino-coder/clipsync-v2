@@ -13,6 +13,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'clip_service.dart';
 import 'license/license_gate.dart';
 import 'license/license_service.dart';
+import 'slip/slip_bootstrap.dart';
 import 'update_service.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -39,6 +40,7 @@ class _HomeScreenState extends State<HomeScreen> {
   String _lastClip = '';
   String _status = 'Not connected';
   String _targetId = '';
+  SlipBootstrap? _slipBootstrap;
 
   @override
   void initState() {
@@ -51,6 +53,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     FlutterForegroundTask.removeTaskDataCallback(_onData);
+    unawaited(_stopSlipStack());
     _fallbackRetryTimer?.cancel();
     _fallbackHeartbeatTimer?.cancel();
     _fallbackWs?.close();
@@ -72,6 +75,36 @@ class _HomeScreenState extends State<HomeScreen> {
     });
     if (running && saved.isNotEmpty) {
       _addEvent('Restored ${fmtId(saved)}');
+      await _maybeStartSlipStack();
+    }
+  }
+
+  Future<void> _maybeStartSlipStack() async {
+    if (!await isSlipAutoConfirmEnabled()) {
+      return;
+    }
+    final secret = await loadSharedSecret();
+    if (secret == null || secret.isEmpty || _targetId.isEmpty) {
+      return;
+    }
+    await _startSlipStack(secret);
+  }
+
+  Future<void> _startSlipStack(String sharedSecret) async {
+    await _stopSlipStack();
+    final bootstrap = SlipBootstrap(
+      targetId: _targetId,
+      sharedSecret: sharedSecret,
+    );
+    await bootstrap.start(onLog: _addEvent);
+    _slipBootstrap = bootstrap;
+  }
+
+  Future<void> _stopSlipStack() async {
+    final bootstrap = _slipBootstrap;
+    _slipBootstrap = null;
+    if (bootstrap != null) {
+      await bootstrap.stop();
     }
   }
 
@@ -190,6 +223,10 @@ class _HomeScreenState extends State<HomeScreen> {
       _targetId = parsed.id;
       _status = 'PC ID scanned';
     });
+    if (parsed.secret != null && parsed.secret!.isNotEmpty) {
+      await saveSharedSecret(parsed.secret);
+      _addEvent('Pairing secret saved');
+    }
     _addEvent('Scanned ${fmtId(parsed.id)}');
   }
 
@@ -206,6 +243,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final p = await SharedPreferences.getInstance();
     await p.setString('target_id', raw);
+
+    final parsed = parsePairingCode(_ctrl.text.trim());
+    if (parsed?.secret != null && parsed!.secret!.isNotEmpty) {
+      await saveSharedSecret(parsed.secret);
+    }
+
     await FlutterForegroundTask.saveData(key: 'target_id', value: raw);
     _targetId = raw;
     _addEvent('Start ${fmtId(raw)}');
@@ -240,6 +283,8 @@ class _HomeScreenState extends State<HomeScreen> {
       if (error != null) {
         _connectFallbackSocket(raw);
       }
+
+      await _maybeStartSlipStack();
     } finally {
       if (mounted) {
         setState(() {
@@ -258,6 +303,7 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       await FlutterForegroundTask.stopService();
       await _stopFallbackSocket();
+      await _stopSlipStack();
       await Future<void>.delayed(const Duration(milliseconds: 350));
       _addEvent('Stopped');
       setState(() {

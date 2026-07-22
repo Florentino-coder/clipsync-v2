@@ -16,6 +16,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 // - wss://clipsync-relay.onrender.com
 const kRelayUrl = 'wss://clipsync-relay.onrender.com';
 const kAppVersion = '0.9.0+21';
+
+/// SharedPreferences key for pairing v2 HMAC secret (see [slip_bootstrap.dart]).
+const kSharedSecretPrefKey = 'shared_secret';
 const kAuthorName = 'Florentino356';
 const kReconnectSteps = [2, 5, 10, 30, 60];
 const kHeartbeatInterval = Duration(minutes: 10);
