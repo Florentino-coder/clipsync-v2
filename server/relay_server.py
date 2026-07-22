@@ -201,6 +201,26 @@ async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
             elif action == "heartbeat":
                 await send(ws, {"type": "heartbeat_ack"})
 
+            # Phone → PC slip event (HMAC opaque to relay; forward only).
+            elif action == "slip_event":
+                if not sub_id:
+                    continue
+
+                pc = pcs.get(sub_id)
+                if not pc:
+                    continue
+
+                await send(
+                    pc,
+                    {
+                        "type": "slip_event",
+                        "payload": msg.get("payload"),
+                        "sig": msg.get("sig", ""),
+                    },
+                )
+
+                log.info("SLIP  phone -> %s", fmt(sub_id))
+
             # PC clipboard update
             elif action == "clip":
                 if not peer_id:
