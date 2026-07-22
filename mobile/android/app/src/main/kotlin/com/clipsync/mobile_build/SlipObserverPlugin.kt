@@ -1,6 +1,7 @@
 package com.clipsync.mobile_build
 
 import android.content.ContentResolver
+import android.content.ContentUris
 import android.database.ContentObserver
 import android.net.Uri
 import android.os.Handler
@@ -30,6 +31,14 @@ class SlipObserverPlugin : FlutterPlugin, EventChannel.StreamHandler {
         }
         resolver?.registerContentObserver(
             MediaStore.Images.Media.EXTERNAL_CONTENT_URI, true, observer!!)
+        queryLatest(events)
+    }
+
+    private fun matchesBankFolder(bucket: String, relativePath: String): Boolean {
+        return bankBuckets.any { marker ->
+            bucket.contains(marker, ignoreCase = true) ||
+                relativePath.contains(marker, ignoreCase = true)
+        }
     }
 
     private fun queryLatest(events: EventChannel.EventSink?) {
@@ -37,7 +46,8 @@ class SlipObserverPlugin : FlutterPlugin, EventChannel.StreamHandler {
             MediaStore.Images.Media._ID,
             MediaStore.Images.Media.DATA,
             MediaStore.Images.Media.BUCKET_DISPLAY_NAME,
-            MediaStore.Images.Media.DATE_ADDED)
+            MediaStore.Images.Media.DATE_ADDED,
+            MediaStore.Images.Media.RELATIVE_PATH)
         resolver?.query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, proj,
             null, null, "${MediaStore.Images.Media.DATE_ADDED} DESC")?.use { c ->
             if (c.moveToFirst()) {
@@ -45,12 +55,18 @@ class SlipObserverPlugin : FlutterPlugin, EventChannel.StreamHandler {
                 if (id == lastId) return
                 lastId = id
                 val bucket = c.getString(2) ?: ""
-                if (bankBuckets.any { bucket.contains(it, ignoreCase = true) }) {
-                    events?.success(mapOf(
-                        "path" to c.getString(1),
-                        "bucket" to bucket,
-                        "date_added" to c.getLong(3)))
-                }
+                val relativePath = c.getString(4) ?: ""
+                if (!matchesBankFolder(bucket, relativePath)) return
+                val uri = ContentUris.withAppendedId(
+                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id).toString()
+                val dataPath = c.getString(1)
+                val path = dataPath?.takeIf { it.isNotEmpty() } ?: uri
+                events?.success(mapOf(
+                    "uri" to uri,
+                    "path" to path,
+                    "bucket" to bucket,
+                    "relative_path" to relativePath,
+                    "date_added" to c.getLong(3)))
             }
         }
     }
