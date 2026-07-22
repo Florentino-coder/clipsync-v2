@@ -24,7 +24,7 @@ import urllib.parse
 import urllib.request
 import ctypes
 from pathlib import Path
-from typing import Any, Callable, Mapping, Optional
+from typing import Any, Awaitable, Callable, Mapping, Optional
 
 import pyperclip
 import qrcode
@@ -39,6 +39,7 @@ except Exception:  # pragma: no cover - used only when Tk is unavailable.
     messagebox = None
 
 from clipsync.audit import append_audit
+from clipsync.bootstrap import start_slip_bootstrap
 from clipsync.ui.audit_viewer import AuditViewer
 from clipsync.ui.debug_panel import DebugPanel
 from clipsync.ui.settings_panel import SettingsPanel
@@ -274,6 +275,17 @@ class ClipSyncClient:
         self.sent_count = 0
         self.generation = 0
         self.reconnect_step = 0
+        self._slip_message_handler: Callable[[dict[str, Any]], Awaitable[None]] | None = None
+
+    def set_slip_message_handler(
+        self, handler: Callable[[dict[str, Any]], Awaitable[None]] | None
+    ) -> None:
+        self._slip_message_handler = handler
+
+    async def send_slip_ack(self, event_id: str) -> None:
+        if not self.ws or not event_id:
+            return
+        await self.ws.send(json.dumps({"action": "slip_ack", "event_id": event_id}))
 
     def start(self) -> None:
         if self.running:
@@ -378,8 +390,21 @@ class ClipSyncClient:
             return
         elif msg_type == "kicked":
             self.on_event("kicked", {})
+        elif msg_type == "slip_event":
+            handler = self._slip_message_handler
+            if handler is not None and self.loop is not None:
+                asyncio.run_coroutine_threadsafe(self._dispatch_slip(msg), self.loop)
         elif msg.get("error"):
             self.on_event("error", {"message": str(msg.get("error"))})
+
+    async def _dispatch_slip(self, msg: dict[str, Any]) -> None:
+        handler = self._slip_message_handler
+        if handler is None:
+            return
+        try:
+            await handler(msg)
+        except Exception as exc:
+            self.on_event("error", {"message": f"slip handler: {exc}"})
 
     async def _heartbeat_loop(self, generation: int) -> None:
         while self._is_current(generation):
@@ -475,6 +500,7 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
         self.audit_viewer: Optional[AuditViewer] = None
         self._slip_override_bridge: Any = None
         self._slip_orchestrator: Any = None
+        self._slip_bootstrap: Any = None
         self._on_slip_config_reload: Optional[Callable[[dict[str, Any]], None]] = None
 
         self.title(APP_NAME)
@@ -485,6 +511,16 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
         self._load_window_icon()
         self._build_ui()
         self.after(350, self._start_sync)
+        self.after(500, self._start_slip_stack)
+
+    def _start_slip_stack(self) -> None:
+        if not SECRET_FILE.is_file():
+            return
+        try:
+            shared_secret = load_or_create_shared_secret()
+            self._slip_bootstrap = start_slip_bootstrap(self, self.client, shared_secret)
+        except Exception as exc:
+            self._append_log(f"Slip bootstrap failed: {exc}")
 
     def _load_window_icon(self) -> None:
         icon_path = resource_path("assets/clipsync_icon.png")
@@ -1013,6 +1049,9 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
             self._start_sync()
 
     def _on_close(self) -> None:
+        bootstrap = self._slip_bootstrap
+        if bootstrap is not None:
+            bootstrap.stop()
         self.client.stop()
         self.after(250, self.destroy)
 

@@ -238,6 +238,27 @@ async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
 
                 log.info("SLIP  phone -> %s", fmt(sub_id))
 
+            # PC → phone slip ack (after PC processed the event).
+            elif action == "slip_ack":
+                if not peer_id:
+                    continue
+                event_id = msg.get("event_id")
+                if not event_id or not isinstance(event_id, str):
+                    continue
+
+                payload = json.dumps(
+                    {"type": "slip_ack", "event_id": event_id},
+                    ensure_ascii=False,
+                )
+                dead: set[Ws] = set()
+                for ph in list(phones.get(peer_id, set())):
+                    try:
+                        await ph.send_str(payload)
+                    except Exception:
+                        dead.add(ph)
+                phones[peer_id] -= dead
+                log.info("ACK   %s -> phone(s)", fmt(peer_id))
+
             # PC clipboard update
             elif action == "clip":
                 if not peer_id:
