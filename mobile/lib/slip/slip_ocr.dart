@@ -37,10 +37,6 @@ class MlKitSlipOcr implements SlipOcr {
   Future<void> close() => _recognizer.close();
 
   static double _averageConfidence(RecognizedText recognized) {
-    if (recognized.text.isEmpty) {
-      return 0.0;
-    }
-
     final confidences = <double>[];
     for (final block in recognized.blocks) {
       for (final line in block.lines) {
@@ -53,10 +49,26 @@ class MlKitSlipOcr implements SlipOcr {
       }
     }
 
+    return averageConfidenceFromValues(
+      textEmpty: recognized.text.isEmpty,
+      confidences: confidences,
+    );
+  }
+
+  /// Package-visible helper for unit tests.
+  ///
+  /// Returns `0.0` when text is empty or no element confidences were reported
+  /// (unknown confidence must not look like a perfect OCR score).
+  static double averageConfidenceFromValues({
+    required bool textEmpty,
+    required List<double> confidences,
+  }) {
+    if (textEmpty) {
+      return 0.0;
+    }
     if (confidences.isEmpty) {
       return 0.0;
     }
-
     return confidences.reduce((a, b) => a + b) / confidences.length;
   }
 }
