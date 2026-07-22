@@ -81,6 +81,13 @@ class ChromeBridge:
         payload = json.dumps({"type": "confirm_order", "orderId": str(order_id)})
         await self._broadcast(payload)
 
+    async def push_site_profiles(self, profiles: list[dict[str, Any]] | tuple[dict[str, Any], ...]) -> None:
+        """Push validated site profiles to authenticated extension clients."""
+        from clipsync.site_profiles import build_site_profiles_message
+
+        payload = json.dumps(build_site_profiles_message(profiles))
+        await self._broadcast(payload)
+
     async def _broadcast(self, payload: str) -> None:
         if not self._clients:
             return
@@ -104,9 +111,13 @@ class ChromeBridge:
     async def _invoke(self, callback: Optional[MessageCallback], data: dict[str, Any]) -> None:
         if callback is None:
             return
-        result = callback(data)
-        if isinstance(result, Awaitable):
-            await result
+        try:
+            result = callback(data)
+            if isinstance(result, Awaitable):
+                await result
+        except Exception:
+            # Callback errors must not tear down the extension WebSocket.
+            logger.exception("chrome_bridge callback failed for type=%s", data.get("type"))
 
     async def _handler(self, websocket: WebSocketServerProtocol) -> None:
         authenticated = False
