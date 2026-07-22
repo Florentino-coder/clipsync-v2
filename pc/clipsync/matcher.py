@@ -9,7 +9,26 @@ from typing import Any, Iterable, Mapping, MutableSet, Optional, Set
 AMOUNT_EPSILON = 0.005
 
 
-def _amounts_equal(a: float, b: float) -> bool:
+def _amount_present(value: Any) -> bool:
+    """True when amount is a usable number (missing/None rejected; never default to 0)."""
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, (int, float)):
+        return True
+    if isinstance(value, str) and value.strip():
+        try:
+            float(value)
+            return True
+        except ValueError:
+            return False
+    return False
+
+
+def _amounts_equal(a: Any, b: Any) -> bool:
+    if not _amount_present(a) or not _amount_present(b):
+        return False
     return abs(float(a) - float(b)) < AMOUNT_EPSILON
 
 
@@ -26,7 +45,10 @@ def _candidate_matches(
     order: Mapping[str, Any],
     cfg: Mapping[str, Any],
 ) -> bool:
-    if not _amounts_equal(ocr.get("amount", 0), order.get("amount", 0)):
+    # Missing/None amounts never match (do not coerce to 0.0).
+    if "amount" not in ocr or "amount" not in order:
+        return False
+    if not _amounts_equal(ocr["amount"], order["amount"]):
         return False
     matching = _matching_cfg(cfg)
     if matching.get("require_account_last4_match", True):
@@ -46,12 +68,17 @@ def match_order(
     """Return the single matching order, or None if none / ambiguous / duplicate.
 
     Ambiguous (>1 matching order) returns None so callers cannot auto-confirm.
+
+    When ``matching.prevent_duplicate_ref_number`` is True, ``used_refs`` must be
+    provided (use an empty set if none are known yet). Passing ``used_refs=None``
+    raises ``ValueError`` so duplicate checks cannot be silently skipped.
     """
     matching = _matching_cfg(cfg)
-    ref = ocr.get("ref_number")
-    if matching.get("prevent_duplicate_ref_number", True) and ref is not None:
-        refs = used_refs if used_refs is not None else set()
-        if str(ref) in refs:
+    if matching.get("prevent_duplicate_ref_number", True):
+        if used_refs is None:
+            raise ValueError("used_refs required when prevent_duplicate_ref_number")
+        ref = ocr.get("ref_number")
+        if ref is not None and str(ref) in used_refs:
             return None
 
     candidates = [dict(order) for order in orders if _candidate_matches(ocr, order, cfg)]

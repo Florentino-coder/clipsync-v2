@@ -160,3 +160,60 @@ def test_used_refs_persist_roundtrip(tmp_path: Path):
     refs = {"ref-a", "ref-b"}
     save_used_refs(refs, path)
     assert load_used_refs(path) == refs
+
+
+def test_amount_epsilon_boundary_abs_diff_lt_0_005_matches():
+    """abs(349.996 - 350) = 0.004 < 0.005 → match; abs(349.994 - 350) = 0.006 ≥ 0.005 → no match."""
+    orders = [{"order_id": "1234", "amount": 350.0, "account_last4": "6789"}]
+    ocr_inside = {**OCR, "amount": 349.996}
+    ocr_outside = {**OCR, "amount": 349.994}
+
+    assert match_order(ocr_inside, orders, CFG, used_refs=set()) is not None
+    assert match_order(ocr_outside, orders, CFG, used_refs=set()) is None
+
+
+def test_exact_amount_threshold_5000_needs_review_because_gte():
+    """Manual review uses amount >= threshold: exactly 5000.0 with threshold 5000.0 needs review."""
+    ocr = {**OCR, "amount": 5000.0}
+    orders = [{"order_id": "1", "amount": 5000.0, "account_last4": "6789"}]
+    matched = match_order(ocr, orders, CFG, used_refs=set())
+    assert matched is not None
+    assert should_auto_confirm(ocr, matched, CFG) is False
+
+
+def test_missing_ocr_amount_no_match():
+    ocr = {k: v for k, v in OCR.items() if k != "amount"}
+    assert match_order(ocr, ORDERS, CFG, used_refs=set()) is None
+
+
+def test_none_ocr_amount_no_match():
+    ocr = {**OCR, "amount": None}
+    assert match_order(ocr, ORDERS, CFG, used_refs=set()) is None
+
+
+def test_missing_order_amount_no_match():
+    orders = [{"order_id": "1234", "account_last4": "6789"}]
+    assert match_order(OCR, orders, CFG, used_refs=set()) is None
+
+
+def test_none_order_amount_no_match():
+    orders = [{"order_id": "1234", "amount": None, "account_last4": "6789"}]
+    assert match_order(OCR, orders, CFG, used_refs=set()) is None
+
+
+def test_used_refs_none_raises_when_prevent_duplicate_enabled():
+    with pytest.raises(ValueError, match="used_refs required when prevent_duplicate_ref_number"):
+        match_order(OCR, ORDERS, CFG, used_refs=None)
+
+
+def test_used_refs_none_ok_when_prevent_duplicate_disabled():
+    cfg = {
+        **CFG,
+        "matching": {
+            "require_account_last4_match": True,
+            "prevent_duplicate_ref_number": False,
+        },
+    }
+    result = match_order(OCR, ORDERS, cfg, used_refs=None)
+    assert result is not None
+    assert result["order_id"] == "1234"
