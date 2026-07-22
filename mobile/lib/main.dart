@@ -5,6 +5,7 @@ import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
 import 'clip_service.dart';
 import 'home_screen.dart';
+import 'license/license_gate.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -32,7 +33,7 @@ class App extends StatelessWidget {
           useMaterial3: true,
           brightness: Brightness.dark,
         ),
-        home: const HomeScreen(),
+        home: const LicenseGate(child: HomeScreen()),
       ),
     );
   }

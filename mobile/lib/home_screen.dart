@@ -11,6 +11,8 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'clip_service.dart';
+import 'license/license_gate.dart';
+import 'license/license_service.dart';
 import 'update_service.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -497,6 +499,12 @@ class _HomeScreenState extends State<HomeScreen> {
                             color: cs.onSurfaceVariant,
                           ),
                         ),
+                        if (LicenseStatusScope.maybeOf(context) != null) ...[
+                          const SizedBox(height: 6),
+                          _LicenseBadgeChip(
+                            scope: LicenseStatusScope.maybeOf(context)!,
+                          ),
+                        ],
                       ],
                     ),
                   ),
@@ -811,6 +819,44 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LicenseBadgeChip extends StatelessWidget {
+  const _LicenseBadgeChip({required this.scope});
+
+  final LicenseStatusScope scope;
+
+  Color _color(ColorScheme cs) {
+    switch (scope.badge) {
+      case 'green':
+        return Colors.green.shade600;
+      case 'yellow':
+        return Colors.amber.shade800;
+      default:
+        return cs.error;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final color = _color(cs);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Text(
+        licenseBadgeLabel(scope.result),
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+          color: color,
         ),
       ),
     );
