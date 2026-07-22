@@ -39,6 +39,7 @@ except Exception:  # pragma: no cover - used only when Tk is unavailable.
     messagebox = None
 
 from clipsync.audit import append_audit
+from clipsync.ui.audit_viewer import AuditViewer
 from clipsync.ui.debug_panel import DebugPanel
 from clipsync.ui.settings_panel import SettingsPanel
 
@@ -471,6 +472,7 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
         self.slip_event_queue: queue.Queue = queue.Queue()
         self.debug_panel: Optional[DebugPanel] = None
         self.settings_panel: Optional[SettingsPanel] = None
+        self.audit_viewer: Optional[AuditViewer] = None
         self._slip_override_bridge: Any = None
         self._slip_orchestrator: Any = None
         self._on_slip_config_reload: Optional[Callable[[dict[str, Any]], None]] = None
@@ -525,6 +527,10 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
             settings_tab,
             on_reload=self._on_settings_reload,
         )
+
+        audit_tab = ttk.Frame(notebook, style="Card.TFrame")
+        notebook.add(audit_tab, text="ประวัติ")
+        self.audit_viewer = AuditViewer(audit_tab)
 
         outer = ttk.Frame(clipboard_tab, style="Card.TFrame", padding=22)
         outer.pack(fill="both", expand=True, padx=8, pady=8)
