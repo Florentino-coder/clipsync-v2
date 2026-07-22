@@ -14,9 +14,16 @@ if (!(Test-Path ".\.venv\Scripts\python.exe")) {
 Remove-Item -Recurse -Force .\dist\ClipSyncPC -ErrorAction SilentlyContinue
 Remove-Item -Force .\dist\ClipSyncPC.exe -ErrorAction SilentlyContinue
 
-$extraData = @('--add-data', 'assets\clipsync_icon.png;assets')
-if (Test-Path '.\chrome-extension\manifest.json') {
-    $extraData += @('--add-data', 'chrome-extension;chrome-extension')
+# Onedir (installer) — uses checked-in ClipSyncPC.spec with chrome-extension datas.
+.\.venv\Scripts\python.exe -m PyInstaller `
+    --noconfirm `
+    --clean `
+    ClipSyncPC.spec
+
+$root = $PSScriptRoot
+$extraData = @('--add-data', "$root\assets\clipsync_icon.png;assets")
+if (Test-Path "$root\chrome-extension\manifest.json") {
+    $extraData += @('--add-data', "$root\chrome-extension;chrome-extension")
 }
 
 $hiddenImports = @(
@@ -25,21 +32,17 @@ $hiddenImports = @(
     '--hidden-import', 'cryptography'
 )
 
+# Onefile portable — write spec under build/ so we never overwrite ClipSyncPC.spec.
 .\.venv\Scripts\python.exe -m PyInstaller `
     --noconfirm `
     --clean `
     --onefile `
     --windowed `
     --name ClipSyncPC `
-    --icon assets\clipsync.ico `
+    --icon "$root\assets\clipsync.ico" `
     @extraData `
     @hiddenImports `
     --distpath dist `
     --workpath build `
-    --specpath . `
+    --specpath build `
     clipsync_pc.py
-
-.\.venv\Scripts\python.exe -m PyInstaller `
-    --noconfirm `
-    --clean `
-    ClipSyncPC.spec
