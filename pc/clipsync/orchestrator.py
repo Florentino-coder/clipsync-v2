@@ -204,7 +204,7 @@ class SlipOrchestrator:
                 await self._emit_ack(event_id)
                 return out
 
-            if result.get("ok"):
+            if result.get("ok") and result.get("verified") is True:
                 ref = event.get("ref_number")
                 if ref is not None:
                     self._used_refs.add(str(ref))
@@ -215,7 +215,10 @@ class SlipOrchestrator:
                 await self._emit_ack(event_id)
                 return out
             out = self._audit_and_return(
-                event, matched, "confirm_failed", confirmed_by=None
+                event,
+                matched,
+                "confirm_failed",
+                confirmed_by=None,
             )
             await self._emit_ack(event_id)
             return out

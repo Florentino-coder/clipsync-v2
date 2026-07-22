@@ -128,7 +128,7 @@ async def test_normal_event_calls_confirm(tmp_path: Path):
     async def _reply() -> None:
         await asyncio.sleep(0.02)
         orch.on_confirm_result(
-            {"type": "confirm_result", "orderId": "1234", "ok": True, "reason": None}
+            {"type": "confirm_result", "orderId": "1234", "ok": True, "verified": True, "reason": None}
         )
 
     reply_task = asyncio.create_task(_reply())
@@ -177,7 +177,7 @@ async def test_duplicate_event_skipped(tmp_path: Path):
     async def _reply() -> None:
         await asyncio.sleep(0.02)
         orch.on_confirm_result(
-            {"type": "confirm_result", "orderId": "1234", "ok": True, "reason": None}
+            {"type": "confirm_result", "orderId": "1234", "ok": True, "verified": True, "reason": None}
         )
 
     t1 = asyncio.create_task(_reply())
@@ -217,7 +217,7 @@ async def test_relay_valid_hmac_proceeds(tmp_path: Path):
     async def _reply() -> None:
         await asyncio.sleep(0.02)
         orch.on_confirm_result(
-            {"type": "confirm_result", "orderId": "1234", "ok": True, "reason": None}
+            {"type": "confirm_result", "orderId": "1234", "ok": True, "verified": True, "reason": None}
         )
 
     t = asyncio.create_task(_reply())
@@ -274,6 +274,39 @@ async def test_auto_confirm_disabled_pending_review(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_clicked_but_unverified_marks_confirm_failed(tmp_path: Path):
+    bridge = MagicMock()
+    bridge.push_confirm_order = AsyncMock()
+    orch = _make_orchestrator(tmp_path, bridge)
+    orch.on_pending_orders(
+        {
+            "type": "pending_orders",
+            "orders": [{"orderId": "1234", "amount": 350.0, "accountLast4": "6789"}],
+        }
+    )
+
+    async def _reply() -> None:
+        await asyncio.sleep(0.02)
+        orch.on_confirm_result(
+            {
+                "type": "confirm_result",
+                "orderId": "1234",
+                "ok": True,
+                "verified": False,
+                "reason": "clicked_but_unverified",
+            }
+        )
+
+    reply_task = asyncio.create_task(_reply())
+    result = await orch.handle_slip_event({**EVENT, "event_id": "evt-unverified"}, source="usb")
+    await reply_task
+
+    assert result["decision"] == "confirm_failed"
+    audits = _audit_lines(tmp_path / "audit.jsonl")
+    assert any(a.get("decision") == "confirm_failed" for a in audits)
+
+
+@pytest.mark.asyncio
 async def test_confirm_timeout_marks_confirm_failed(tmp_path: Path):
     bridge = MagicMock()
     bridge.push_confirm_order = AsyncMock()
@@ -306,7 +339,7 @@ async def test_seen_events_persist_across_instances(tmp_path: Path):
     async def _reply() -> None:
         await asyncio.sleep(0.02)
         orch1.on_confirm_result(
-            {"type": "confirm_result", "orderId": "1234", "ok": True, "reason": None}
+            {"type": "confirm_result", "orderId": "1234", "ok": True, "verified": True, "reason": None}
         )
 
     t = asyncio.create_task(_reply())
@@ -356,7 +389,7 @@ async def test_handle_slip_event_invokes_send_ack(tmp_path: Path):
     async def _reply() -> None:
         await asyncio.sleep(0.02)
         orch.on_confirm_result(
-            {"type": "confirm_result", "orderId": "1234", "ok": True, "reason": None}
+            {"type": "confirm_result", "orderId": "1234", "ok": True, "verified": True, "reason": None}
         )
 
     t = asyncio.create_task(_reply())
@@ -393,7 +426,7 @@ async def test_duplicate_event_still_invokes_send_ack(tmp_path: Path):
     async def _reply() -> None:
         await asyncio.sleep(0.02)
         orch.on_confirm_result(
-            {"type": "confirm_result", "orderId": "1234", "ok": True, "reason": None}
+            {"type": "confirm_result", "orderId": "1234", "ok": True, "verified": True, "reason": None}
         )
 
     t = asyncio.create_task(_reply())
