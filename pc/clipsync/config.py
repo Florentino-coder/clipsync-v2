@@ -161,6 +161,14 @@ def _save_config(path: Path, cfg: dict[str, Any]) -> None:
     path.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
+def save_config(cfg: dict[str, Any], path: Path | str | None = None) -> Path:
+    """Validate and persist config. Returns the path written."""
+    config_path = Path(path) if path is not None else default_config_path()
+    _validate(cfg)
+    _save_config(config_path, cfg)
+    return config_path
+
+
 def load_config(path: Path | str | None = None) -> dict[str, Any]:
     """Load config, merge defaults, validate types, and ensure pairing_token exists.
 

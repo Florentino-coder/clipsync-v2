@@ -40,6 +40,7 @@ except Exception:  # pragma: no cover - used only when Tk is unavailable.
 
 from clipsync.audit import append_audit
 from clipsync.ui.debug_panel import DebugPanel
+from clipsync.ui.settings_panel import SettingsPanel
 
 APP_NAME = "ClipSync PC"
 APP_VERSION = "0.8.3"
@@ -469,7 +470,10 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
         self.update_checking = False
         self.slip_event_queue: queue.Queue = queue.Queue()
         self.debug_panel: Optional[DebugPanel] = None
+        self.settings_panel: Optional[SettingsPanel] = None
         self._slip_override_bridge: Any = None
+        self._slip_orchestrator: Any = None
+        self._on_slip_config_reload: Optional[Callable[[dict[str, Any]], None]] = None
 
         self.title(APP_NAME)
         self.geometry("720x640")
@@ -513,6 +517,13 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
             on_manual_confirm=self._on_slip_manual_confirm,
             on_reject=self._on_slip_reject,
             on_view_slip=self._on_slip_view,
+        )
+
+        settings_tab = ttk.Frame(notebook, style="Card.TFrame")
+        notebook.add(settings_tab, text="Settings")
+        self.settings_panel = SettingsPanel(
+            settings_tab,
+            on_reload=self._on_settings_reload,
         )
 
         outer = ttk.Frame(clipboard_tab, style="Card.TFrame", padding=22)
@@ -698,6 +709,30 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
     def set_slip_override_bridge(self, bridge: Any) -> None:
         """Optional ChromeBridge used by manual confirm from the Slip tab."""
         self._slip_override_bridge = bridge
+
+    def set_slip_orchestrator(self, orchestrator: Any) -> None:
+        """Optional SlipOrchestrator for config hot-reload from Settings."""
+        self._slip_orchestrator = orchestrator
+
+    def set_slip_config_reload_handler(
+        self, handler: Optional[Callable[[dict[str, Any]], None]]
+    ) -> None:
+        self._on_slip_config_reload = handler
+
+    def on_transport_changed(self, old: Optional[str], new: str) -> None:
+        """Forward TransportManager callback onto the Settings status strip."""
+        if self.settings_panel is not None:
+            self.settings_panel.on_transport_changed(old, new)
+
+    def _on_settings_reload(self, cfg: dict[str, Any]) -> None:
+        if self._slip_orchestrator is not None:
+            update = getattr(self._slip_orchestrator, "update_config", None)
+            if callable(update):
+                update(cfg)
+        if self._on_slip_config_reload is not None:
+            self._on_slip_config_reload(cfg)
+        mode = (cfg.get("transport") or {}).get("preferred_mode", "?")
+        self._append_log(f"Slip config reloaded (transport={mode})")
 
     def _on_slip_view(self, event: Mapping[str, Any]) -> None:
         if messagebox is None:

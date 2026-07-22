@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from clipsync.ui.debug_panel import DebugPanel, format_slip_row, status_tag_for
+from clipsync.ui.settings_panel import SettingsPanel, transport_indicator
 
 __all__ = [
     "DebugPanel",
+    "SettingsPanel",
     "format_slip_row",
     "status_tag_for",
+    "transport_indicator",
 ]
