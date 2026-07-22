@@ -159,7 +159,7 @@ async def test_clip_without_register_is_silent(client):
             await asyncio.wait_for(ws.receive_json(), timeout=0.2)
 
 
-async def test_phone_does_not_receive_own_clip(client):
+async def test_phone_clip_does_not_reach_pc(client):
     """Clip is PC -> phone only; phones cannot push clips to PC today."""
     async with client.ws_connect("/") as pc_ws:
         await pc_ws.send_json({"action": "register", "id": "123456789"})
