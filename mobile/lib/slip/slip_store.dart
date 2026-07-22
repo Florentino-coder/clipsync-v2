@@ -94,6 +94,9 @@ class StoredSlip {
 }
 
 /// JSON per-day slip store under the app documents directory.
+///
+/// Files live at `{docs}/slips/YYYY-MM-DD.json`. [init] runs a simple cleanup
+/// that drops day files / entries older than [retentionDays] (default 90).
 class SlipStore {
   SlipStore({
     required this.slipsDir,
@@ -200,6 +203,8 @@ class SlipStore {
     await for (final dayFile in _allDayFiles()) {
       final day = _dayFromFileName(dayFile.path);
       if (day != null && day.isBefore(cutoff)) {
+        final entries = await _readDayFile(dayFile);
+        await _deleteImagesForEntries(entries);
         await dayFile.delete();
         continue;
       }
@@ -211,10 +216,36 @@ class SlipStore {
       }).toList();
 
       if (kept.isEmpty) {
+        await _deleteImagesForEntries(entries);
         await dayFile.delete();
       } else if (kept.length != entries.length) {
+        final keptIds = kept.map((e) => e.eventId).toSet();
+        final dropped =
+            entries.where((entry) => !keptIds.contains(entry.eventId));
+        await _deleteImagesForEntries(dropped);
         await _writeDayFile(dayFile, kept);
       }
+    }
+  }
+
+  Future<void> _deleteImagesForEntries(Iterable<StoredSlip> entries) async {
+    for (final entry in entries) {
+      await _deleteImageIfExists(entry.imagePath);
+    }
+  }
+
+  Future<void> _deleteImageIfExists(String imagePath) async {
+    if (imagePath.isEmpty || imagePath.startsWith('content://')) {
+      return;
+    }
+
+    try {
+      final file = File(imagePath);
+      if (await file.exists()) {
+        await file.delete();
+      }
+    } catch (_) {
+      // Ignore missing files or permission errors.
     }
   }
 

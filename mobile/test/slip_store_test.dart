@@ -106,12 +106,18 @@ void main() {
     final slipsDir = Directory('${tempDir.path}/slips_retention');
     await slipsDir.create(recursive: true);
 
+    final oldImage = File('${tempDir.path}/old-slip.jpg');
+    await oldImage.writeAsBytes([1, 2, 3]);
+
+    final recentImage = File('${tempDir.path}/recent-slip.jpg');
+    await recentImage.writeAsBytes([4, 5, 6]);
+
     final oldDayFile = File('${slipsDir.path}/2026-01-01.json');
     await oldDayFile.writeAsString(jsonEncode([
       {
         'event_id': 'old-evt',
         'ref_number': '202601011200000001',
-        'image_path': '/tmp/old.jpg',
+        'image_path': oldImage.path,
         'captured_at': '2026-01-01T12:00:00+07:00',
         'sent': true,
         'bank': 'SCB',
@@ -128,7 +134,7 @@ void main() {
       {
         'event_id': 'recent-evt',
         'ref_number': '202607221432001',
-        'image_path': '/tmp/recent.jpg',
+        'image_path': recentImage.path,
         'captured_at': '2026-07-22T12:00:00+07:00',
         'sent': false,
         'bank': 'SCB',
@@ -149,9 +155,66 @@ void main() {
 
     expect(await oldDayFile.exists(), isFalse);
     expect(await recentDayFile.exists(), isTrue);
+    expect(await oldImage.exists(), isFalse);
+    expect(await recentImage.exists(), isTrue);
 
     final unsent = await retentionStore.unsent();
     expect(unsent.map((e) => e.eventId), ['recent-evt']);
+  });
+
+  test('init deletes image files for pruned entries within a day file', () async {
+    final slipsDir = Directory('${tempDir.path}/slips_prune_images');
+    await slipsDir.create(recursive: true);
+
+    final oldImage = File('${tempDir.path}/pruned-slip.jpg');
+    await oldImage.writeAsBytes([7, 8, 9]);
+
+    final keptImage = File('${tempDir.path}/kept-slip.jpg');
+    await keptImage.writeAsBytes([10, 11, 12]);
+
+    final mixedDayFile = File('${slipsDir.path}/2026-07-22.json');
+    await mixedDayFile.writeAsString(jsonEncode([
+      {
+        'event_id': 'old-in-file',
+        'ref_number': '202604201200000001',
+        'image_path': oldImage.path,
+        'captured_at': '2026-04-20T12:00:00+07:00',
+        'sent': true,
+        'bank': 'SCB',
+        'amount': 100.0,
+        'sender_name': null,
+        'receiver_account_last4': '1234',
+        'ocr_confidence': 0.8,
+        'parse_failed': false,
+      },
+      {
+        'event_id': 'recent-in-file',
+        'ref_number': '202607221432001',
+        'image_path': keptImage.path,
+        'captured_at': '2026-07-22T12:00:00+07:00',
+        'sent': false,
+        'bank': 'SCB',
+        'amount': 200.0,
+        'sender_name': null,
+        'receiver_account_last4': '5678',
+        'ocr_confidence': 0.9,
+        'parse_failed': false,
+      },
+    ]));
+
+    final retentionStore = SlipStore(
+      slipsDir: slipsDir,
+      retentionDays: 90,
+      now: () => DateTime(2026, 7, 22),
+    );
+    await retentionStore.init();
+
+    expect(await mixedDayFile.exists(), isTrue);
+    expect(await oldImage.exists(), isFalse);
+    expect(await keptImage.exists(), isTrue);
+
+    final unsent = await retentionStore.unsent();
+    expect(unsent.map((e) => e.eventId), ['recent-in-file']);
   });
 
   test('stored entries reconstruct SlipEvent', () async {
