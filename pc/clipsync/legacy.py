@@ -55,7 +55,7 @@ MAX_UPDATE_MANIFEST_BYTES = 64 * 1024
 def app_base_dir() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
-    return Path(__file__).resolve().parent
+    return Path(__file__).resolve().parent.parent
 
 
 def resource_path(relative: str) -> Path:
