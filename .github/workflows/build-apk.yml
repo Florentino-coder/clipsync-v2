@@ -36,6 +36,8 @@ jobs:
           rm -rf mobile_build/lib
           cp -R mobile/lib mobile_build/lib
           cp mobile/android/app/src/main/AndroidManifest.xml mobile_build/android/app/src/main/AndroidManifest.xml
+          mkdir -p mobile_build/android/app/src/main/kotlin
+          cp -R mobile/android/app/src/main/kotlin/* mobile_build/android/app/src/main/kotlin/
           if [ -d mobile/android/app/src/main/res ]; then
             cp -R mobile/android/app/src/main/res/* mobile_build/android/app/src/main/res/
           fi

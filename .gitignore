@@ -10,7 +10,7 @@ pc/clipsync.id
 
 mobile/.gradle/
 mobile/build/
-mobile_build/
+/mobile_build/
 
 release/android-signing/
 
