@@ -93,12 +93,17 @@ async def test_slip_fetcher_relay_raises_usb_required():
     assert excinfo.value.code == "usb_required"
 
 
-def _make_orchestrator(tmp_path: Path, bridge: Any | None = None) -> SlipOrchestrator:
+def _make_orchestrator(
+    tmp_path: Path,
+    bridge: Any | None = None,
+    *,
+    cfg: dict[str, Any] | None = None,
+) -> SlipOrchestrator:
     if bridge is None:
         bridge = MagicMock()
         bridge.push_confirm_order = AsyncMock()
     return SlipOrchestrator(
-        CFG,
+        cfg or CFG,
         chrome_bridge=bridge,
         shared_secret=SECRET,
         audit_path=tmp_path / "audit.jsonl",
@@ -220,6 +225,52 @@ async def test_relay_valid_hmac_proceeds(tmp_path: Path):
     await t
     bridge.push_confirm_order.assert_awaited_once_with("1234")
     assert result["decision"] == "auto_confirmed"
+
+
+@pytest.mark.asyncio
+async def test_parse_failed_pending_review_no_confirm(tmp_path: Path):
+    bridge = MagicMock()
+    bridge.push_confirm_order = AsyncMock()
+    orch = _make_orchestrator(tmp_path, bridge)
+    orch.on_pending_orders(
+        {
+            "type": "pending_orders",
+            "orders": [{"orderId": "1234", "amount": 350.0, "accountLast4": "6789"}],
+        }
+    )
+
+    event = {**EVENT, "event_id": "evt-pf", "parse_failed": True}
+    result = await orch.handle_slip_event(event, source="usb")
+
+    bridge.push_confirm_order.assert_not_awaited()
+    assert result["decision"] == "pending_review"
+    audits = _audit_lines(tmp_path / "audit.jsonl")
+    assert any(a.get("decision") == "pending_review" for a in audits)
+
+
+@pytest.mark.asyncio
+async def test_auto_confirm_disabled_pending_review(tmp_path: Path):
+    bridge = MagicMock()
+    bridge.push_confirm_order = AsyncMock()
+    cfg = {
+        **CFG,
+        "auto_confirm": {**CFG["auto_confirm"], "enabled": False},
+    }
+    orch = _make_orchestrator(tmp_path, bridge, cfg=cfg)
+    orch.on_pending_orders(
+        {
+            "type": "pending_orders",
+            "orders": [{"orderId": "1234", "amount": 350.0, "accountLast4": "6789"}],
+        }
+    )
+
+    event = {**EVENT, "event_id": "evt-off"}
+    result = await orch.handle_slip_event(event, source="usb")
+
+    bridge.push_confirm_order.assert_not_awaited()
+    assert result["decision"] == "pending_review"
+    audits = _audit_lines(tmp_path / "audit.jsonl")
+    assert any(a.get("decision") == "pending_review" for a in audits)
 
 
 @pytest.mark.asyncio
