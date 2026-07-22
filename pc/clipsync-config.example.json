@@ -1,0 +1,26 @@
+{
+  "transport": {
+    "preferred_mode": "auto"
+  },
+  "relay_url": "wss://clipsync-relay.onrender.com",
+  "auto_confirm": {
+    "enabled": false,
+    "min_ocr_confidence": 0.90,
+    "require_manual_review": {
+      "enabled": true,
+      "amount_threshold": 5000.0
+    }
+  },
+  "chrome_bridge": {
+    "pairing_token": "",
+    "ws_port": 8765
+  },
+  "matching": {
+    "require_account_last4_match": true,
+    "prevent_duplicate_ref_number": true
+  },
+  "license": {
+    "token_path": "%APPDATA%\\ClipSync\\license.token",
+    "refresh_interval_days": 3
+  }
+}
