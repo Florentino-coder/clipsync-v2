@@ -11,5 +11,24 @@
   "dry_run": true,
   "post_click_verify_timeout_ms": 15000,
   "click_wait_max_ms": 30000,
+  "api": {
+    "enabled": true,
+    "list_pending": {
+      "method": "GET",
+      "url_template": "/bo/withdrawal-approve-search?skip=0&limit=50&start_date={today}&end_date={today}",
+      "fields_map": {
+        "order_id": "id",
+        "amount": "amount",
+        "account": "member_bank_account",
+        "bank": "bank_information_id",
+        "name": "username"
+      }
+    },
+    "approve": {
+      "method": "POST",
+      "url_template": "TODO: from HAR recon Step 1 — approve endpoint unknown",
+      "payload_template": {}
+    }
+  },
   "_todo": "Task 4.0 BLOCKED: replace with real customer HAR/HTML fixture + domain when partner snapshot is available"
 }
