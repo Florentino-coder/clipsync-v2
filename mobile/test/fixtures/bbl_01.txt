@@ -1,0 +1,7 @@
+# Synthetic stub OCR text (not a real bank slip). Replace when real BBL OCR samples are available.
+Bangkok Bank
+ธนาคารกรุงเทพ
+Transfer Successful
+Amount 500.00 THB
+Reference 202607221654321098
+To ****5678

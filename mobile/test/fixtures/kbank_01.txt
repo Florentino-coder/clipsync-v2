@@ -1,0 +1,8 @@
+# Synthetic stub OCR text (not a real bank slip). Replace when real KBANK OCR samples are available.
+K PLUS
+กสิกรไทย
+Kasikornbank
+โอนเงินสำเร็จ
+จำนวน 1,250.50 บาท
+เลขที่อ้างอิง 202607221543210987
+บัญชี *1234

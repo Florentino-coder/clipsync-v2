@@ -1,0 +1,8 @@
+# Synthetic stub OCR text (not a real bank slip). Replace when real SCB OCR samples are available.
+SCB Easy
+ไทยพาณิชย์
+Siam Commercial Bank
+โอนเงินสำเร็จ
+จำนวน: 350.00 บาท
+รหัสอ้างอิง: 202607221432001
+ไปยังบัญชี x6789
