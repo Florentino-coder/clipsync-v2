@@ -25,21 +25,34 @@ String? cleanId(String raw) {
   return value.length == 9 && int.tryParse(value) != null ? value : null;
 }
 
-String? parsePairingCode(String code) {
+class PairingParseResult {
+  const PairingParseResult({required this.id, this.secret});
+
+  final String id;
+  final String? secret;
+}
+
+PairingParseResult? parsePairingCode(String code) {
   final trimmed = code.trim();
   final uri = Uri.tryParse(trimmed);
   if (uri != null && uri.scheme == 'clipsync' && uri.host == 'pair') {
-    return cleanId(uri.queryParameters['id'] ?? '');
+    final id = cleanId(uri.queryParameters['id'] ?? '');
+    if (id == null) return null;
+    return PairingParseResult(id: id, secret: uri.queryParameters['secret']);
   }
 
   try {
     final data = jsonDecode(trimmed);
     if (data is Map) {
-      return cleanId('${data['id'] ?? ''}');
+      final id = cleanId('${data['id'] ?? ''}');
+      if (id == null) return null;
+      return PairingParseResult(id: id);
     }
   } catch (_) {}
 
-  return cleanId(trimmed);
+  final id = cleanId(trimmed);
+  if (id == null) return null;
+  return PairingParseResult(id: id);
 }
 
 int nextReconnectDelay(int step) {

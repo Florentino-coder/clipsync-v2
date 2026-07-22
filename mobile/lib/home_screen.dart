@@ -174,8 +174,8 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     if (id == null) return;
 
-    final normalized = parsePairingCode(id);
-    if (normalized == null) {
+    final parsed = parsePairingCode(id);
+    if (parsed == null) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('QR is not a valid ClipSync PC ID')),
@@ -184,11 +184,11 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     setState(() {
-      _ctrl.text = fmtId(normalized);
-      _targetId = normalized;
+      _ctrl.text = fmtId(parsed.id);
+      _targetId = parsed.id;
       _status = 'PC ID scanned';
     });
-    _addEvent('Scanned ${fmtId(normalized)}');
+    _addEvent('Scanned ${fmtId(parsed.id)}');
   }
 
   Future<void> _start() async {
@@ -894,12 +894,12 @@ class _QrScanScreenState extends State<QrScanScreen> {
   void _onDetect(BarcodeCapture capture) {
     if (_done || capture.barcodes.isEmpty) return;
     final value = capture.barcodes.first.rawValue ?? '';
-    final id = parsePairingCode(value);
-    if (id == null) return;
+    final parsed = parsePairingCode(value);
+    if (parsed == null) return;
 
     _done = true;
     unawaited(_controller.stop());
-    Navigator.of(context).pop(id);
+    Navigator.of(context).pop(value);
   }
 
   @override

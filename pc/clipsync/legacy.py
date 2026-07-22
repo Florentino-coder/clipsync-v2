@@ -13,6 +13,7 @@ import asyncio
 import json
 import os
 import random
+import secrets
 import subprocess
 import sys
 import tempfile
@@ -75,6 +76,7 @@ def user_data_dir() -> Path:
 BASE_DIR = app_base_dir()
 CONFIG_FILE = BASE_DIR / CONFIG_NAME
 ID_FILE = user_data_dir() / "clipsync.id"
+SECRET_FILE = user_data_dir() / "clipsync.secret"
 UPDATE_STATE_FILE = user_data_dir() / "update_state.json"
 
 
@@ -90,8 +92,21 @@ def fmt_id(value: str) -> str:
     return f"{digits[:3]}-{digits[3:6]}-{digits[6:]}"
 
 
+def load_or_create_shared_secret() -> str:
+    if SECRET_FILE.is_file():
+        secret = SECRET_FILE.read_text(encoding="utf-8").strip()
+        if len(secret) == 32 and all(ch in "0123456789abcdef" for ch in secret):
+            return secret
+    secret = secrets.token_hex(16)
+    SECRET_FILE.parent.mkdir(parents=True, exist_ok=True)
+    SECRET_FILE.write_text(secret, encoding="utf-8")
+    return secret
+
+
 def pairing_url(pc_id: str) -> str:
-    return f"clipsync://pair?id={pc_id.replace('-', '')}"
+    clean = pc_id.replace("-", "")
+    secret = load_or_create_shared_secret()
+    return f"clipsync://pair?id={clean}&secret={secret}"
 
 
 def next_reconnect_delay(step: int) -> int:
