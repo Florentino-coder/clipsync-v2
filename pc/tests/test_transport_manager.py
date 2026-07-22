@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from datetime import datetime, timezone
 from unittest.mock import patch
 
@@ -63,6 +62,22 @@ def test_returns_none_without_tether():
         assert find_usb_tether_phone_ip() is None
 
 
+def test_tries_dot_129_when_dot_1_fails():
+    with patch(
+        "clipsync.transport.usb._list_candidates",
+        return_value=[("Remote NDIS", "192.168.42.100", "255.255.255.0")],
+    ):
+        with patch(
+            "clipsync.transport.usb._probe_phone",
+            side_effect=lambda ip: ip == "192.168.42.129",
+        ) as probe:
+            assert find_usb_tether_phone_ip() == "192.168.42.129"
+            assert [c.args[0] for c in probe.call_args_list] == [
+                "192.168.42.1",
+                "192.168.42.129",
+            ]
+
+
 def test_auth_token_matches_mobile_scheme():
     import hashlib
     import hmac
@@ -82,7 +97,7 @@ async def test_auto_mode_selects_usb_when_available():
     mgr = TransportManager(
         SECRET,
         find_usb_ip=lambda: "192.168.187.1",
-        sleep=instant_sleep,
+        sleep=blocked_sleep,
         usb_transport_factory=lambda ip: MockTransport("usb", phone_ip=ip),
         relay_transport_factory=lambda: MockTransport("relay"),
     )
@@ -102,7 +117,7 @@ async def test_auto_mode_selects_relay_without_usb():
     mgr = TransportManager(
         SECRET,
         find_usb_ip=lambda: None,
-        sleep=instant_sleep,
+        sleep=blocked_sleep,
         usb_transport_factory=lambda ip: MockTransport("usb", phone_ip=ip),
         relay_transport_factory=lambda: MockTransport("relay"),
     )
@@ -117,17 +132,15 @@ async def test_auto_mode_selects_relay_without_usb():
 @pytest.mark.asyncio
 async def test_on_transport_changed_when_usb_lost():
     MockTransport.instances.clear()
-    def probe(_ip: str) -> bool:
-        return False
-
+    usb_up = {"value": True}
     changes: list[tuple[str | None, str]] = []
 
     mgr = TransportManager(
         SECRET,
         poll_interval=0.01,
-        find_usb_ip=lambda: "192.168.187.1",
-        probe_phone=probe,
-        sleep=instant_sleep,
+        find_usb_ip=lambda: "192.168.187.1" if usb_up["value"] else None,
+        probe_phone=lambda _ip: usb_up["value"],
+        sleep=blocked_sleep,
         on_transport_changed=lambda old, new: changes.append((old, new)),
         usb_transport_factory=lambda ip: MockTransport("usb", phone_ip=ip),
         relay_transport_factory=lambda: MockTransport("relay"),
@@ -135,11 +148,7 @@ async def test_on_transport_changed_when_usb_lost():
     await mgr.start(lambda _event: None)
     assert mgr.transport_name == "usb"
 
-    if mgr._poll_task is not None:
-        mgr._poll_task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await mgr._poll_task
-
+    usb_up["value"] = False
     for _ in range(3):
         await mgr._evaluate_transport()
 
@@ -160,18 +169,13 @@ async def test_usb_returns_switches_back_from_relay():
         poll_interval=0.01,
         find_usb_ip=lambda: "192.168.187.1" if usb_available["value"] else None,
         probe_phone=lambda _ip: True,
-        sleep=instant_sleep,
+        sleep=blocked_sleep,
         on_transport_changed=lambda old, new: changes.append((old, new)),
         usb_transport_factory=lambda ip: MockTransport("usb", phone_ip=ip),
         relay_transport_factory=lambda: MockTransport("relay"),
     )
     await mgr.start(lambda _event: None)
     assert mgr.transport_name == "relay"
-
-    if mgr._poll_task is not None:
-        mgr._poll_task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await mgr._poll_task
 
     usb_available["value"] = True
     await mgr._evaluate_transport()
