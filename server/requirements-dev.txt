@@ -1,0 +1,6 @@
+# Production pin (aiohttp==3.9.5) may fail to build on Python 3.14+ without MSVC.
+# For local dev on 3.14+, ensure aiohttp>=3.13 is installed (prebuilt wheels).
+-r requirements.txt
+pytest>=8.0
+pytest-aiohttp>=1.0.5
+pytest-asyncio>=0.23
