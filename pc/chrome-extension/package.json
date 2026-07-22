@@ -1,0 +1,12 @@
+{
+  "name": "clipsync-chrome-extension",
+  "private": true,
+  "version": "1.0.0",
+  "description": "ClipSync MV3 extension — text-anchor engine tests",
+  "scripts": {
+    "test": "node --test tests/engine.test.js"
+  },
+  "devDependencies": {
+    "jsdom": "^26.1.0"
+  }
+}
