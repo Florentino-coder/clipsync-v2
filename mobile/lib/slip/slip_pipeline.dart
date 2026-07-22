@@ -6,40 +6,51 @@ import 'slip_ocr.dart';
 import 'slip_store.dart';
 import 'slip_watcher.dart';
 
+/// Copies a `content://` URI to a local filesystem path ML Kit can read.
+typedef ContentUriCopier = Future<String> Function(String contentUri);
+
 /// Watcher event → OCR → parse → persist → optional outbox hook.
+///
+/// Layer 1 on phone = ML Kit Latin only. Thai name verification is optional
+/// PC-side Layer 2 (EasyOCR) — see `pc/clipsync/thai_ocr.py` in a later task.
+/// TODO: Do not block this mobile pipeline on Thai OCR / EasyOCR.
 class SlipPipeline {
   SlipPipeline({
     required SlipOcr ocr,
     required SlipStore store,
     SlipWatcher? watcher,
     Uuid? uuid,
+    ContentUriCopier? contentUriCopier,
   })  : _ocr = ocr,
         _store = store,
         _watcher = watcher ?? SlipWatcher(),
-        _uuid = uuid ?? const Uuid();
+        _uuid = uuid ?? const Uuid(),
+        _contentUriCopier = contentUriCopier;
 
   final SlipOcr _ocr;
   final SlipStore _store;
   final SlipWatcher _watcher;
   final Uuid _uuid;
+  final ContentUriCopier? _contentUriCopier;
 
-  /// Called after a slip is OCR'd, parsed, and saved (Task 2.4 outbox hook).
+  /// Called after a slip is OCR'd, parsed, and saved.
+  /// TODO(Task 2.4): wire this hook to the outbox / PC relay — not implemented yet.
   Future<void> Function(SlipEvent event)? onSlipReady;
 
   SlipWatcher get watcher => _watcher;
 
-  Stream<SlipEvent> watchAndProcess() {
-    return _watcher.watch().asyncMap((event) async {
+  /// Yields successfully processed slips; skips events that resolve to null.
+  Stream<SlipEvent> watchAndProcess() async* {
+    await for (final event in _watcher.watch()) {
       final slip = await processWatcherEvent(event);
-      if (slip == null) {
-        throw StateError('Failed to process slip watcher event');
+      if (slip != null) {
+        yield slip;
       }
-      return slip;
-    });
+    }
   }
 
   Future<SlipEvent?> processWatcherEvent(Map<String, dynamic> event) async {
-    final imagePath = _resolveImagePath(event);
+    final imagePath = await _resolveReadableImagePath(event);
     if (imagePath == null || imagePath.isEmpty) {
       return null;
     }
@@ -65,19 +76,43 @@ class SlipPipeline {
     return slipEvent;
   }
 
-  String? _resolveImagePath(Map<String, dynamic> event) {
+  /// Prefers a real filesystem [path]; copies `content://` URIs when needed.
+  Future<String?> _resolveReadableImagePath(Map<String, dynamic> event) async {
     final path = event['path'];
-    if (path is String && path.isNotEmpty) {
+    final uri = event['uri'];
+
+    if (path is String && path.isNotEmpty && !_isContentUri(path)) {
       return path;
     }
 
-    final uri = event['uri'];
+    final contentUri = _pickContentUri(path, uri);
+    if (contentUri != null) {
+      final copier = _contentUriCopier;
+      if (copier != null) {
+        return copier(contentUri);
+      }
+      // TODO: provide a default Android content-resolver copy for production.
+      return contentUri;
+    }
+
     if (uri is String && uri.isNotEmpty) {
       return uri;
     }
 
     return null;
   }
+
+  static String? _pickContentUri(dynamic path, dynamic uri) {
+    if (path is String && _isContentUri(path)) {
+      return path;
+    }
+    if (uri is String && _isContentUri(uri)) {
+      return uri;
+    }
+    return null;
+  }
+
+  static bool _isContentUri(String value) => value.startsWith('content://');
 
   String _resolveCapturedAt(Map<String, dynamic> event) {
     final dateAdded = event['date_added'];

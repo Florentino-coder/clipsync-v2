@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:clipsync_app/slip/slip_event.dart';
 import 'package:clipsync_app/slip/slip_ocr.dart';
 import 'package:clipsync_app/slip/slip_pipeline.dart';
 import 'package:clipsync_app/slip/slip_store.dart';
+import 'package:clipsync_app/slip/slip_watcher.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class FakeSlipOcr implements SlipOcr {
@@ -11,11 +13,22 @@ class FakeSlipOcr implements SlipOcr {
 
   final String rawText;
   final double confidence;
+  final List<String> seenPaths = [];
 
   @override
   Future<SlipOcrResult> run(String imagePath) async {
+    seenPaths.add(imagePath);
     return SlipOcrResult(rawText: rawText, confidence: confidence);
   }
+}
+
+class FakeSlipWatcher extends SlipWatcher {
+  FakeSlipWatcher(this._controller);
+
+  final StreamController<Map<String, dynamic>> _controller;
+
+  @override
+  Stream<Map<String, dynamic>> watch() => _controller.stream;
 }
 
 void main() {
@@ -97,16 +110,93 @@ void main() {
     expect(result!.localImagePath, '/storage/emulated/0/Pictures/slip.png');
   });
 
-  test('falls back to uri when path missing', () async {
+  test('resolves content:// uri to cache path before OCR', () async {
+    final ocr = FakeSlipOcr('random text');
     final pipeline = SlipPipeline(
-      ocr: FakeSlipOcr('random text'),
+      ocr: ocr,
       store: store,
+      contentUriCopier: (uri) async {
+        expect(uri, 'content://media/external/images/media/99');
+        return '/data/user/0/com.clipsync/cache/slip_copy.jpg';
+      },
     );
 
     final result = await pipeline.processWatcherEvent({
       'uri': 'content://media/external/images/media/99',
     });
 
-    expect(result!.localImagePath, 'content://media/external/images/media/99');
+    expect(ocr.seenPaths, ['/data/user/0/com.clipsync/cache/slip_copy.jpg']);
+    expect(
+      result!.localImagePath,
+      '/data/user/0/com.clipsync/cache/slip_copy.jpg',
+    );
+  });
+
+  test('resolves content:// path to cache path before OCR', () async {
+    final ocr = FakeSlipOcr('random text');
+    final pipeline = SlipPipeline(
+      ocr: ocr,
+      store: store,
+      contentUriCopier: (uri) async {
+        expect(uri, 'content://media/external/images/media/7');
+        return '/cache/from_path.jpg';
+      },
+    );
+
+    final result = await pipeline.processWatcherEvent({
+      'path': 'content://media/external/images/media/7',
+      'uri': 'content://media/external/images/media/7',
+    });
+
+    expect(ocr.seenPaths, ['/cache/from_path.jpg']);
+    expect(result!.localImagePath, '/cache/from_path.jpg');
+  });
+
+  test('does not copy when filesystem path is available', () async {
+    var copied = false;
+    final ocr = FakeSlipOcr('random text');
+    final pipeline = SlipPipeline(
+      ocr: ocr,
+      store: store,
+      contentUriCopier: (uri) async {
+        copied = true;
+        return '/should/not/be/used.jpg';
+      },
+    );
+
+    final result = await pipeline.processWatcherEvent({
+      'uri': 'content://media/external/images/media/99',
+      'path': '/storage/emulated/0/Pictures/slip.png',
+    });
+
+    expect(copied, isFalse);
+    expect(ocr.seenPaths, ['/storage/emulated/0/Pictures/slip.png']);
+    expect(result!.localImagePath, '/storage/emulated/0/Pictures/slip.png');
+  });
+
+  test('watchAndProcess skips null results instead of throwing', () async {
+    final controller = StreamController<Map<String, dynamic>>();
+    final ocr = FakeSlipOcr(File('test/fixtures/scb_01.txt').readAsStringSync());
+    final pipeline = SlipPipeline(
+      ocr: ocr,
+      store: store,
+      watcher: FakeSlipWatcher(controller),
+    );
+
+    final received = <SlipEvent>[];
+    final sub = pipeline.watchAndProcess().listen(received.add);
+
+    controller.add({}); // missing path/uri → null
+    controller.add({
+      'path': '/data/user/0/com.clipsync/good.jpg',
+      'date_added': 1721638800,
+    });
+    await Future<void>.delayed(Duration.zero);
+    await controller.close();
+    await sub.cancel();
+
+    expect(received, hasLength(1));
+    expect(received.single.bank, 'SCB');
+    expect(ocr.seenPaths, ['/data/user/0/com.clipsync/good.jpg']);
   });
 }
