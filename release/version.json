@@ -1,21 +1,22 @@
 {
   "schema": 1,
-  "released_at": "2026-07-10",
+  "released_at": "2026-07-22",
   "pc": {
-    "version": "0.8.3",
+    "version": "0.9.0",
     "installer_url": "https://github.com/Florentino-coder/clipsync/releases/download/android-latest/ClipSyncPC_Setup.exe",
     "portable_url": "https://github.com/Florentino-coder/clipsync/releases/download/android-latest/ClipSyncPC.exe",
     "required": false,
-    "notes": "Optimize clipboard polling latency using Windows GetClipboardSequenceNumber API."
+    "notes": "Slip auto-confirm: license gate, chrome bridge, and packaging for 0.9.0."
   },
   "android": {
-    "version": "0.8.9+20",
+    "version": "0.9.0+21",
     "url": "https://github.com/Florentino-coder/clipsync/releases/download/android-latest/ClipSync.apk",
     "required": false,
-    "notes": "Re-enables Android release shrinking with app-level keep rules for CameraX, ML Kit, mobile_scanner, and foreground service."
+    "notes": "Slip MediaStore OCR pipeline + offline Ed25519 license gate."
   },
   "extension": {
     "version": "1.0.0",
-    "download_url": ""
+    "download_url": "",
+    "notes": "ClipSync Auto Confirm MV3 extension (site profiles + localhost bridge)."
   }
 }

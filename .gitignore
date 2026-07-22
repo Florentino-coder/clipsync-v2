@@ -3,6 +3,8 @@ __pycache__/
 .dart_tool/
 build/
 
+pc/chrome-extension/node_modules/
+
 pc/.venv/
 pc/build/
 pc/dist/
@@ -10,6 +12,10 @@ pc/clipsync.id
 
 mobile/.gradle/
 mobile/build/
+mobile/.flutter-plugins-dependencies
+mobile/android/local.properties
+mobile/android/app/src/main/java/
+mobile/flutter_*.log
 /mobile_build/
 
 release/android-signing/
