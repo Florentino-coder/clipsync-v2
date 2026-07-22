@@ -12,6 +12,7 @@ import argparse
 import asyncio
 import json
 import os
+import queue
 import random
 import secrets
 import subprocess
@@ -23,7 +24,7 @@ import urllib.parse
 import urllib.request
 import ctypes
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping, Optional
 
 import pyperclip
 import qrcode
@@ -31,10 +32,14 @@ import websockets
 
 try:
     import tkinter as tk
-    from tkinter import ttk
+    from tkinter import messagebox, ttk
 except Exception:  # pragma: no cover - used only when Tk is unavailable.
     tk = None
     ttk = None
+    messagebox = None
+
+from clipsync.audit import append_audit
+from clipsync.ui.debug_panel import DebugPanel
 
 APP_NAME = "ClipSync PC"
 APP_VERSION = "0.8.3"
@@ -462,10 +467,13 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
         self.update_url = ""
         self.update_version = ""
         self.update_checking = False
+        self.slip_event_queue: queue.Queue = queue.Queue()
+        self.debug_panel: Optional[DebugPanel] = None
+        self._slip_override_bridge: Any = None
 
         self.title(APP_NAME)
-        self.geometry("480x560")
-        self.minsize(440, 520)
+        self.geometry("720x640")
+        self.minsize(560, 560)
         self.configure(bg="#f6f8fb")
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self._load_window_icon()
@@ -490,8 +498,25 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
         style.configure("Primary.TButton", padding=(14, 9), font=("Segoe UI", 10, "bold"))
         style.configure("Secondary.TButton", padding=(10, 7), font=("Segoe UI", 9))
 
-        outer = ttk.Frame(self, style="Card.TFrame", padding=22)
-        outer.pack(fill="both", expand=True, padx=18, pady=18)
+        notebook = ttk.Notebook(self)
+        notebook.pack(fill="both", expand=True, padx=10, pady=10)
+        self.notebook = notebook
+
+        clipboard_tab = ttk.Frame(notebook, style="Card.TFrame")
+        notebook.add(clipboard_tab, text="Clipboard")
+
+        slip_tab = ttk.Frame(notebook, style="Card.TFrame")
+        notebook.add(slip_tab, text="Slip")
+        self.debug_panel = DebugPanel(
+            slip_tab,
+            self.slip_event_queue,
+            on_manual_confirm=self._on_slip_manual_confirm,
+            on_reject=self._on_slip_reject,
+            on_view_slip=self._on_slip_view,
+        )
+
+        outer = ttk.Frame(clipboard_tab, style="Card.TFrame", padding=22)
+        outer.pack(fill="both", expand=True, padx=8, pady=8)
 
         header = ttk.Frame(outer, style="Card.TFrame")
         header.pack(fill="x")
@@ -665,6 +690,66 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
         canvas.create_rectangle(15, 7, 28, 13, fill="#7cf2c8", outline="#7cf2c8")
         canvas.create_line(16, 19, 28, 19, fill="#2646d8", width=3)
         canvas.create_line(16, 25, 28, 25, fill="#2646d8", width=3)
+
+    def push_slip_ui_event(self, event: Mapping[str, Any]) -> None:
+        """Enqueue a slip decision for the Slip debug tab (thread-safe)."""
+        self.slip_event_queue.put(dict(event))
+
+    def set_slip_override_bridge(self, bridge: Any) -> None:
+        """Optional ChromeBridge used by manual confirm from the Slip tab."""
+        self._slip_override_bridge = bridge
+
+    def _on_slip_view(self, event: Mapping[str, Any]) -> None:
+        if messagebox is None:
+            return
+        event_id = event.get("event_id") or "-"
+        messagebox.showinfo(
+            "ดูรูปสลิป",
+            f"ยังไม่มีรูปสำหรับ event {event_id}\n(ต้องเชื่อม USB + slip_fetcher)",
+        )
+
+    def _on_slip_manual_confirm(self, event: Mapping[str, Any]) -> None:
+        order_id = event.get("order_id") or event.get("orderId")
+        record = {
+            "event_id": event.get("event_id"),
+            "ref_number": event.get("ref_number"),
+            "amount": event.get("amount"),
+            "order_id": order_id,
+            "decision": "auto_confirmed",
+            "confirmed_by": "admin_manual",
+        }
+        append_audit(record)
+        if order_id and self._slip_override_bridge is not None:
+            try:
+                push = getattr(self._slip_override_bridge, "push_confirm_order", None)
+                if push is not None:
+                    result = push(str(order_id))
+                    if asyncio.iscoroutine(result):
+                        asyncio.get_event_loop().create_task(result)
+            except Exception as exc:
+                self._append_log(f"Manual confirm push failed: {exc}")
+        ui_event = {
+            **dict(event),
+            "decision": "auto_confirmed",
+            "confirmed_by": "admin_manual",
+            "order_id": order_id,
+        }
+        self.push_slip_ui_event(ui_event)
+        self._append_log(f"Admin manual confirm: {event.get('event_id')}")
+
+    def _on_slip_reject(self, event: Mapping[str, Any]) -> None:
+        record = {
+            "event_id": event.get("event_id"),
+            "ref_number": event.get("ref_number"),
+            "amount": event.get("amount"),
+            "order_id": event.get("order_id") or event.get("orderId"),
+            "decision": "overridden",
+            "confirmed_by": "admin_manual",
+        }
+        append_audit(record)
+        ui_event = {**dict(event), "decision": "overridden", "confirmed_by": "admin_manual"}
+        self.push_slip_ui_event(ui_event)
+        self._append_log(f"Admin reject/override: {event.get('event_id')}")
 
     def _thread_event(self, name: str, data: dict[str, Any]) -> None:
         self.after(0, lambda: self._handle_event(name, data))
