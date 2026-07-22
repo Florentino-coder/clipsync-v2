@@ -52,6 +52,12 @@ jobs:
           python -m pip install -r requirements-dev.txt
           python -m pytest -q
 
+      - name: Chrome extension tests
+        working-directory: pc/chrome-extension
+        run: |
+          npm ci
+          npm test
+
   build-apk:
     runs-on: ubuntu-latest
     needs: unit-tests
