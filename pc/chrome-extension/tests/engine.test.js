@@ -70,6 +70,11 @@ describe('normalize', () => {
     assert.equal(normalize('ABC-12 34'), 'ABC1234');
     assert.equal(normalize(null), '');
   });
+
+  it('strips thousands separators so amounts match', () => {
+    assert.equal(normalize('1,347.00'), '1347.00');
+    assert.equal(normalize('1347.00'), '1347.00');
+  });
 });
 
 describe('deepFindByText + findRow + findConfirmButton', () => {

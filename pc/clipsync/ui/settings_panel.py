@@ -105,6 +105,7 @@ class SettingsPanel:
         *,
         config_path: Optional[Path | str] = None,
         on_reload: Optional[ReloadCallback] = None,
+        on_push_profiles: Optional[Callable[[], None]] = None,
         initial_transport: Optional[str] = None,
     ) -> None:
         if ttk is None or tk is None:
@@ -112,6 +113,7 @@ class SettingsPanel:
 
         self._config_path = Path(config_path) if config_path else default_config_path()
         self._on_reload = on_reload
+        self._on_push_profiles = on_push_profiles
         self._transport_name = initial_transport
 
         self.frame = ttk.Frame(parent, padding=12)
@@ -194,6 +196,19 @@ class SettingsPanel:
         ttk.Label(form, textvariable=self._ws_port_var, foreground="#667085").grid(
             row=row, column=0, columnspan=3, sticky="w"
         )
+        row += 1
+        ttk.Button(
+            form,
+            text="Push Site Profiles → Extension",
+            command=self.push_site_profiles,
+        ).grid(row=row, column=0, columnspan=2, sticky="w", pady=(8, 4))
+        row += 1
+        ttk.Label(
+            form,
+            text="โหลด profiles จาก chrome-extension/profiles (ข้าม example*) แล้วส่งให้ extension ที่ connected",
+            foreground="#667085",
+            wraplength=520,
+        ).grid(row=row, column=0, columnspan=3, sticky="w", pady=(0, 4))
 
         row += 1
         ttk.Separator(form, orient="horizontal").grid(
@@ -308,6 +323,21 @@ class SettingsPanel:
                 messagebox.showerror("Settings", str(exc))
             return
         self._status_var.set("Copied pairing token — paste into extension popup")
+
+    def push_site_profiles(self) -> None:
+        if self._on_push_profiles is None:
+            if messagebox is not None:
+                messagebox.showwarning(
+                    "Site Profiles",
+                    "ยังไม่ได้ต่อ Chrome bridge — รอ Slip stack เริ่มก่อน แล้วลองใหม่",
+                )
+            return
+        try:
+            self._on_push_profiles()
+        except Exception as exc:
+            self._status_var.set(f"Push profiles failed: {exc}")
+            if messagebox is not None:
+                messagebox.showerror("Site Profiles", str(exc))
 
     def refresh_apk_status(self) -> None:
         from clipsync.apk_installer import find_bundled_apk, find_hotspot_pc_ip

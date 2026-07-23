@@ -572,6 +572,7 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
         self.settings_panel = SettingsPanel(
             settings_tab,
             on_reload=self._on_settings_reload,
+            on_push_profiles=self.push_site_profiles_to_extension,
         )
 
         audit_tab = ttk.Frame(notebook, style="Card.TFrame")
@@ -762,6 +763,43 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
         """Optional ChromeBridge used by manual confirm from the Slip tab."""
         self._slip_override_bridge = bridge
 
+    def push_site_profiles_to_extension(self) -> None:
+        """Load non-example profiles and push to the connected Chrome extension."""
+        from clipsync.ext_installer import extension_dir
+        from clipsync.site_profiles import load_profiles
+
+        bridge = getattr(self, "_slip_override_bridge", None)
+        if bridge is None:
+            raise RuntimeError(
+                "Chrome bridge ยังไม่พร้อม — รอสักครู่แล้วกดอีกครั้ง "
+                "(ต้องมี pairing token และ extension ขึ้น connected)"
+            )
+
+        profiles_dir = extension_dir() / "profiles"
+        if not profiles_dir.is_dir():
+            raise FileNotFoundError(f"ไม่พบโฟลเดอร์ profiles: {profiles_dir}")
+
+        profiles: list[dict[str, Any]] = []
+        for path in sorted(profiles_dir.glob("*.json")):
+            if path.name.lower().startswith("example"):
+                continue
+            profiles.extend(load_profiles(path))
+        if not profiles:
+            profiles = load_profiles(profiles_dir)
+
+        n_clients = bridge.schedule(bridge.push_site_profiles(profiles)).result(timeout=5)
+        ids = ", ".join(p.get("profile_id", "?") for p in profiles)
+        if not n_clients:
+            raise RuntimeError(
+                "ไม่มี extension ที่ connected — เปิด popup ให้ขึ้น connected ก่อน แล้วกด Push อีกครั้ง"
+            )
+        self._append_log(f"Pushed site profiles ({ids}) → {n_clients} extension(s)")
+        if messagebox is not None:
+            messagebox.showinfo(
+                "Site Profiles",
+                f"ส่งแล้ว: {ids}\nไปที่ popup extension — ควรเห็น Profiles ≥ 1",
+            )
+
     def set_slip_orchestrator(self, orchestrator: Any) -> None:
         """Optional SlipOrchestrator for config hot-reload from Settings."""
         self._slip_orchestrator = orchestrator
@@ -821,32 +859,92 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
 
     def _on_slip_manual_confirm(self, event: Mapping[str, Any]) -> None:
         order_id = event.get("order_id") or event.get("orderId")
+        amount = event.get("amount")
+        ref_number = event.get("ref_number") or event.get("refNumber")
+        slip_payload = {
+            k: event.get(k)
+            for k in (
+                "amount",
+                "bank_name",
+                "bank_name_th",
+                "account_number",
+                "ref_number",
+                "sender",
+                "receiver",
+            )
+            if event.get(k) is not None
+        }
+        match_key = order_id or ref_number or amount
         record = {
             "event_id": event.get("event_id"),
-            "ref_number": event.get("ref_number"),
-            "amount": event.get("amount"),
+            "ref_number": ref_number,
+            "amount": amount,
             "order_id": order_id,
-            "decision": "auto_confirmed",
+            "decision": "dry_run_sent" if match_key else "skipped",
             "confirmed_by": "admin_manual",
         }
         append_audit(record)
-        if order_id and self._slip_override_bridge is not None:
-            try:
-                push = getattr(self._slip_override_bridge, "push_confirm_order", None)
-                if push is not None:
-                    result = push(str(order_id))
-                    if asyncio.iscoroutine(result):
-                        asyncio.get_event_loop().create_task(result)
-            except Exception as exc:
-                self._append_log(f"Manual confirm push failed: {exc}")
+
+        bridge = getattr(self, "_slip_override_bridge", None)
+        n_clients = 0
+        if bridge is None:
+            self._append_log("Manual confirm: Chrome bridge not ready")
+            if messagebox is not None:
+                messagebox.showwarning(
+                    "ยืนยันเอง",
+                    "Chrome bridge ยังไม่พร้อม — รอ extension connected แล้วลองใหม่",
+                )
+            return
+        if not match_key:
+            self._append_log("Manual confirm: no order/ref/amount to match on admin page")
+            if messagebox is not None:
+                messagebox.showwarning(
+                    "ยืนยันเอง",
+                    "สลิปนี้ไม่มี Order / Ref / จำนวน — จับแถวบนหลังบ้านไม่ได้",
+                )
+            return
+        try:
+            n_clients = bridge.schedule(
+                bridge.push_confirm_order(
+                    "" if order_id is None else str(order_id),
+                    amount=amount,
+                    ref_number=ref_number,
+                    slip=slip_payload or None,
+                )
+            ).result(timeout=5)
+        except Exception as exc:
+            self._append_log(f"Manual confirm push failed: {exc}")
+            if messagebox is not None:
+                messagebox.showerror("ยืนยันเอง", str(exc))
+            return
+
+        if not n_clients:
+            self._append_log("Manual confirm: no extension connected")
+            if messagebox is not None:
+                messagebox.showwarning(
+                    "ยืนยันเอง",
+                    "ไม่มี extension ที่ connected — เปิด popup ให้ขึ้น connected ก่อน",
+                )
+            return
+
         ui_event = {
             **dict(event),
-            "decision": "auto_confirmed",
+            "decision": "pending review",
+            "confirm_hint": "dry_run_sent",
             "confirmed_by": "admin_manual",
             "order_id": order_id,
         }
         self.push_slip_ui_event(ui_event)
-        self._append_log(f"Admin manual confirm: {event.get('event_id')}")
+        self._append_log(
+            f"Admin dry-run confirm sent ({match_key}) → {n_clients} extension(s) "
+            f"— ดูกรอบแดงบนหน้าหลังบ้าน"
+        )
+        if messagebox is not None:
+            messagebox.showinfo(
+                "ยืนยันเอง (dry-run)",
+                f"ส่งไป extension แล้ว (จับด้วย: {match_key})\n"
+                "กลับไปดูแท็บหลังบ้าน — ควรเห็นกรอบแดงรอบปุ่มตา/ปุ่มเป้าหมาย",
+            )
 
     def _on_slip_reject(self, event: Mapping[str, Any]) -> None:
         record = {

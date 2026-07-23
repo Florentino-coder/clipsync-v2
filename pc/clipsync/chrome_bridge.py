@@ -38,6 +38,17 @@ class ChromeBridge:
         self._server: Optional[WebSocketServer] = None
         self._clients: Set[WebSocketServerProtocol] = set()
         self._ping_task: Optional[asyncio.Task[None]] = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+
+    @property
+    def connected_clients(self) -> int:
+        return len(self._clients)
+
+    def schedule(self, coro: Awaitable[Any]) -> Any:
+        """Run a coroutine on the bridge event loop from another thread."""
+        if self._loop is None:
+            raise RuntimeError("ChromeBridge is not started")
+        return asyncio.run_coroutine_threadsafe(coro, self._loop)
 
     @property
     def port(self) -> int:
@@ -54,6 +65,7 @@ class ChromeBridge:
     async def start(self) -> None:
         if self._server is not None:
             return
+        self._loop = asyncio.get_running_loop()
         self._server = await websockets.serve(
             self._handler,
             "127.0.0.1",
@@ -77,16 +89,42 @@ class ChromeBridge:
 
         self._clients.clear()
 
-    async def push_confirm_order(self, order_id: str) -> None:
-        payload = json.dumps({"type": "confirm_order", "orderId": str(order_id)})
-        await self._broadcast(payload)
+    async def push_confirm_order(
+        self,
+        order_id: str,
+        *,
+        amount: Any = None,
+        ref_number: Any = None,
+        slip: Optional[Mapping[str, Any]] = None,
+    ) -> int:
+        """Push confirm_order to extension clients. Returns connected client count."""
+        payload: dict[str, Any] = {
+            "type": "confirm_order",
+            "orderId": "" if order_id is None else str(order_id),
+        }
+        if amount is not None and str(amount).strip():
+            payload["amount"] = str(amount).strip()
+        if ref_number is not None and str(ref_number).strip():
+            payload["refNumber"] = str(ref_number).strip()
+        if slip:
+            payload["slip"] = dict(slip)
+        if not self._clients:
+            return 0
+        await self._broadcast(json.dumps(payload))
+        return len(self._clients)
 
-    async def push_site_profiles(self, profiles: list[dict[str, Any]] | tuple[dict[str, Any], ...]) -> None:
-        """Push validated site profiles to authenticated extension clients."""
+    async def push_site_profiles(self, profiles: list[dict[str, Any]] | tuple[dict[str, Any], ...]) -> int:
+        """Push validated site profiles to authenticated extension clients.
+
+        Returns the number of connected extension clients that were targeted.
+        """
         from clipsync.site_profiles import build_site_profiles_message
 
+        if not self._clients:
+            return 0
         payload = json.dumps(build_site_profiles_message(profiles))
         await self._broadcast(payload)
+        return len(self._clients)
 
     async def _broadcast(self, payload: str) -> None:
         if not self._clients:

@@ -12,7 +12,8 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function engineFactory() {
   'use strict';
 
-  const normalize = (s) => (s || '').replace(/[\s\-]/g, '');
+  // Strip spaces, dashes, and thousands separators so 1,347.00 matches 1347.00
+  const normalize = (s) => (s || '').replace(/[\s\-,\u00a0]/g, '');
 
   const POPUP_SCOPE_HINTS = ["[class*='modal']", "[class*='popup']", 'dialog', "[role='dialog']"];
 
@@ -445,15 +446,22 @@
   async function runWorkflowStep(step, stepIndex, profile, context, doc, options) {
     const document = getDocument(doc);
     const dryRun = options.dry_run !== false && profile.dry_run !== false;
+    const outlineOnly = Boolean(options.outline_only);
 
     switch (step.action) {
       case 'click': {
-        if (dryRun && isSubmitStep(step)) {
-          const target = findStepTarget(step, context, document);
-          if (target) outlineButton(target, document);
-          return { ok: false, reason: 'dry_run', wouldClick: true, stopped_before_submit: true };
-        }
         const target = findStepTarget(step, context, document);
+        // dry_run + outline_only: outline first clickable target and stop (no real clicks).
+        if (dryRun && (outlineOnly || isSubmitStep(step))) {
+          if (target) outlineButton(target, document);
+          return {
+            ok: false,
+            reason: 'dry_run',
+            wouldClick: true,
+            stopped_before_submit: true,
+            step_index: stepIndex,
+          };
+        }
         if (!target) return { ok: false, reason: 'click_target_not_found' };
         if (dryRun && options.outline_clicks) outlineButton(target, document);
         else target.click();

@@ -3,6 +3,8 @@
  * Resilient localhost WS client + alarm keepalive (Task 4.2).
  */
 
+importScripts('bundled_profiles.js');
+
 const DEFAULT_WS_URL = 'ws://127.0.0.1:8765';
 const KEEPALIVE_ALARM = 'ws-keepalive';
 const RECONNECT_MS = 3000;
@@ -190,10 +192,34 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   }
 });
 
+function mergeBundledProfiles(existing) {
+  const bundled = Array.isArray(globalThis.BUNDLED_SITE_PROFILES)
+    ? globalThis.BUNDLED_SITE_PROFILES
+    : [];
+  if (!bundled.length) return Array.isArray(existing) ? existing : [];
+  const list = Array.isArray(existing) ? existing.slice() : [];
+  const byId = new Map(list.map((p) => [p && p.profile_id, p]));
+  for (const profile of bundled) {
+    if (!profile || !profile.profile_id) continue;
+    if (!byId.has(profile.profile_id)) {
+      list.push(profile);
+      byId.set(profile.profile_id, profile);
+    }
+  }
+  return list;
+}
+
 function bootstrap() {
   chrome.storage.local.get([STORAGE_KEYS.siteProfiles, STORAGE_KEYS.connectionStatus], (data) => {
     const patch = {};
-    if (!Array.isArray(data.siteProfiles)) patch[STORAGE_KEYS.siteProfiles] = [];
+    const merged = mergeBundledProfiles(data.siteProfiles);
+    const prev = Array.isArray(data.siteProfiles) ? data.siteProfiles : null;
+    const changed =
+      !prev ||
+      prev.length !== merged.length ||
+      JSON.stringify(prev.map((p) => p && p.profile_id)) !==
+        JSON.stringify(merged.map((p) => p && p.profile_id));
+    if (changed) patch[STORAGE_KEYS.siteProfiles] = merged;
     if (!data.connectionStatus) patch[STORAGE_KEYS.connectionStatus] = 'disconnected';
     if (Object.keys(patch).length) chrome.storage.local.set(patch);
   });
@@ -204,9 +230,8 @@ function bootstrap() {
 chrome.runtime.onInstalled.addListener(bootstrap);
 chrome.runtime.onStartup.addListener(bootstrap);
 
-// Alarm may already exist from a previous SW lifetime — recreate + connect on wake.
-ensureKeepaliveAlarm();
-connect();
+// Alarm may already exist from a previous SW lifetime — seed profiles + connect on wake.
+bootstrap();
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return;
