@@ -1,22 +1,23 @@
 {
   "schema": 1,
-  "released_at": "2026-07-22",
+  "released_at": "2026-07-23",
+  "note": "clipsync-v2 TEST pipeline only — production clipsync still uses android-latest on the other repo",
   "pc": {
     "version": "0.9.0",
-    "installer_url": "https://github.com/Florentino-coder/clipsync/releases/download/android-latest/ClipSyncPC_Setup.exe",
-    "portable_url": "https://github.com/Florentino-coder/clipsync/releases/download/android-latest/ClipSyncPC.exe",
+    "installer_url": "https://github.com/Florentino-coder/clipsync-v2/releases/download/slip-test-latest/ClipSyncPC_Setup.exe",
+    "portable_url": "https://github.com/Florentino-coder/clipsync-v2/releases/download/slip-test-latest/ClipSyncPC.exe",
     "required": false,
-    "notes": "Slip auto-confirm: license gate, chrome bridge, and packaging for 0.9.0."
+    "notes": "v2 test builds — do not point production shops here."
   },
   "android": {
     "version": "0.9.0+21",
-    "url": "https://github.com/Florentino-coder/clipsync/releases/download/android-latest/ClipSync.apk",
+    "url": "https://github.com/Florentino-coder/clipsync-v2/releases/download/slip-test-latest/ClipSync-slip.apk",
     "required": false,
-    "notes": "Slip MediaStore OCR pipeline + offline Ed25519 license gate."
+    "notes": "applicationId com.clipsync.mobile_build.test — can sit beside production ClipSync."
   },
   "extension": {
     "version": "1.0.0",
     "download_url": "",
-    "notes": "ClipSync Auto Confirm MV3 extension (site profiles + localhost bridge)."
+    "notes": "Load unpacked from PC chrome-extension folder."
   }
 }

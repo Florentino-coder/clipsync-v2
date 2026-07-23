@@ -36,6 +36,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _showDiagnostics = false;
   bool _busy = false;
   bool _checkingUpdate = false;
+  bool _slipEnabled = false;
   UpdateInfo? _updateInfo;
   String _lastClip = '';
   String _status = 'Not connected';
@@ -65,10 +66,12 @@ class _HomeScreenState extends State<HomeScreen> {
     final p = await SharedPreferences.getInstance();
     final saved = p.getString('target_id') ?? '';
     final running = await FlutterForegroundTask.isRunningService;
+    final slipEnabled = p.getBool(kSlipAutoConfirmPrefKey) ?? false;
     setState(() {
       _ctrl.text = fmtId(saved);
       _targetId = saved.replaceAll('-', '');
       _running = running;
+      _slipEnabled = slipEnabled;
       if (running && saved.isNotEmpty) {
         _status = 'Sync running';
       }
@@ -76,6 +79,24 @@ class _HomeScreenState extends State<HomeScreen> {
     if (running && saved.isNotEmpty) {
       _addEvent('Restored ${fmtId(saved)}');
       await _maybeStartSlipStack();
+    }
+  }
+
+  Future<void> _setSlipEnabled(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(kSlipAutoConfirmPrefKey, enabled);
+    setState(() {
+      _slipEnabled = enabled;
+    });
+    if (!enabled) {
+      await _stopSlipStack();
+      _addEvent('Slip capture OFF');
+      return;
+    }
+    _addEvent('Slip capture ON');
+    await _maybeStartSlipStack();
+    if (_slipBootstrap == null) {
+      _addEvent('Slip: need QR with secret + Start Sync first');
     }
   }
 
@@ -736,6 +757,22 @@ class _HomeScreenState extends State<HomeScreen> {
                   color: _fallbackActive ? const Color(0xFFE09C18) : cs.primary,
                 ),
               ],
+              const SizedBox(height: 12),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text(
+                  'Slip capture (ทดลอง)',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+                subtitle: Text(
+                  _slipEnabled
+                      ? 'จับสลิป + ส่งไป PC (USB/Relay)'
+                      : 'ปิดอยู่ — เปิดหลังสแกน QR จาก PC',
+                  style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
+                ),
+                value: _slipEnabled,
+                onChanged: _busy ? null : _setSlipEnabled,
+              ),
               const SizedBox(height: 28),
               if (_lastClip.isNotEmpty) ...[
                 Text(

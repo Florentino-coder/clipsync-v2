@@ -62,6 +62,14 @@ def default_config() -> dict[str, Any]:
             "token_path": str(data_dir / "license.token"),
             "refresh_interval_days": 3,
         },
+        "apk": {
+            # Test pipeline only — production ClipSync releases must not be overwritten.
+            "download_url": (
+                "https://github.com/Florentino-coder/clipsync-v2/releases/"
+                "download/slip-test-latest/ClipSync-slip.apk"
+            ),
+            "share_port": 8788,
+        },
     }
 
 
@@ -145,6 +153,11 @@ def _validate(cfg: dict[str, Any]) -> None:
         int,
         "license.refresh_interval_days",
     )
+
+    apk = cfg.get("apk")
+    _expect_type(apk, dict, "apk")
+    _expect_type(apk.get("download_url"), str, "apk.download_url")
+    _expect_type(apk.get("share_port"), int, "apk.share_port")
 
 
 def _ensure_pairing_token(cfg: dict[str, Any]) -> bool:

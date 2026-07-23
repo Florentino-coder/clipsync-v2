@@ -145,7 +145,11 @@ class SlipBootstrap:
 
         self._app.after(0, lambda: self._app.set_slip_override_bridge(self._bridge))
         self._app.after(0, lambda: self._app.set_slip_orchestrator(self._orchestrator))
-        self._app_log("Slip stack started (auto_confirm off unless enabled in Settings)")
+        port = self._bridge.port if self._bridge else 8765
+        self._app_log(
+            f"Slip stack started — Chrome bridge listening on ws://127.0.0.1:{port} "
+            "(auto_confirm off unless enabled in Settings)"
+        )
 
         while not self._stop_event.is_set():
             await asyncio.sleep(0.5)

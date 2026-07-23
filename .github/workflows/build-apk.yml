@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - master
+      - main
   workflow_dispatch:
 
 permissions:
@@ -96,6 +97,9 @@ jobs:
             cp -R mobile/android/app/src/main/res/* mobile_build/android/app/src/main/res/
           fi
           perl -0pi -e 's/^\s*ndkVersion\s*=\s*flutter\.ndkVersion\s*\n//mg' mobile_build/android/app/build.gradle.kts
+          # Isolate from production install: different applicationId + test keystore
+          perl -0pi -e 's/applicationId\s*=\s*"com\.clipsync\.mobile_build"/applicationId = "com.clipsync.mobile_build.test"/' \
+            mobile_build/android/app/build.gradle.kts
           cat > mobile_build/android/app/proguard-rules.pro <<'EOF'
           # Flutter runtime and plugin entry points.
           -keep class io.flutter.** { *; }
@@ -211,13 +215,18 @@ jobs:
       - name: Rename APK
         run: |
           mkdir -p artifacts
-          cp mobile_build/build/app/outputs/flutter-apk/app-release.apk artifacts/ClipSync.apk
+          # Test pipeline asset name (clipsync-v2 only — not production ClipSync.apk)
+          cp mobile_build/build/app/outputs/flutter-apk/app-release.apk artifacts/ClipSync-slip.apk
+          # Keep legacy name for local tooling compatibility
+          cp artifacts/ClipSync-slip.apk artifacts/ClipSync.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: ClipSync-APK
-          path: artifacts/ClipSync.apk
+          path: |
+            artifacts/ClipSync-slip.apk
+            artifacts/ClipSync.apk
 
   build-windows-exe:
     runs-on: windows-latest
@@ -268,9 +277,8 @@ jobs:
     needs:
       - build-apk
       - build-windows-exe
-    if: github.ref == 'refs/heads/master'
-    env:
-      PUBLIC_RELEASE_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
+    # clipsync-v2 test repo: publish on main/master. NEVER use android-latest here.
+    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
 
     steps:
       - name: Checkout
@@ -288,32 +296,18 @@ jobs:
           name: ClipSync-Windows-EXE
           path: release
 
-      - name: Upload files to repository release
-        if: github.ref == 'refs/heads/master'
+      - name: Upload files to clipsync-v2 test release
         uses: ncipollo/release-action@v1
         with:
           token: ${{ github.token }}
-          tag: android-latest
-          name: ClipSync Test Builds
-          body: Latest release APK, Windows EXE, Windows setup installer, and update manifest built from master@${{ github.sha }}.
+          tag: slip-test-latest
+          name: ClipSync v2 Slip Test Builds
+          body: |
+            TEST ONLY — not for production shops.
+            Repo: Florentino-coder/clipsync-v2 @ ${{ github.sha }}
+            APK is release-signed with the **v2 test keystore** (separate from production).
+            applicationId uses `.test` suffix so it can sit beside production ClipSync.
           artifacts: release/*
-          allowUpdates: true
-          removeArtifacts: true
-          replacesArtifacts: true
-          artifactErrorsFailBuild: true
-
-      - name: Upload APK to public release
-        if: github.ref == 'refs/heads/master' && env.PUBLIC_RELEASE_TOKEN != ''
-        uses: ncipollo/release-action@v1
-        with:
-          owner: Florentino-coder
-          repo: clipsync-apk
-          token: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
-          tag: android-latest
-          name: ClipSync Android APK
-          body: Latest release APK built from Florentino-coder/clipsync@${{ github.sha }}.
-          commit: main
-          artifacts: release/ClipSync.apk
           allowUpdates: true
           removeArtifacts: true
           replacesArtifacts: true

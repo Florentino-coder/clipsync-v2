@@ -514,13 +514,23 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
         self.after(500, self._start_slip_stack)
 
     def _start_slip_stack(self) -> None:
-        if not SECRET_FILE.is_file():
-            return
+        # Always start chrome bridge + slip stack so the extension can connect
+        # even before a phone has paired. Shared secret is created on first run.
         try:
             shared_secret = load_or_create_shared_secret()
             self._slip_bootstrap = start_slip_bootstrap(self, self.client, shared_secret)
+            self._append_log("Slip stack starting (Chrome bridge ws://127.0.0.1:8765)…")
         except Exception as exc:
             self._append_log(f"Slip bootstrap failed: {exc}")
+            try:
+                from tkinter import messagebox
+
+                messagebox.showerror(
+                    "ClipSync Slip",
+                    f"Chrome bridge ไม่เปิดได้ — extension จะต่อไม่ได้\n\n{exc}",
+                )
+            except Exception:
+                pass
 
     def _load_window_icon(self) -> None:
         icon_path = resource_path("assets/clipsync_icon.png")

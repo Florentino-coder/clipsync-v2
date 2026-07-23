@@ -7,6 +7,7 @@ from clipsync.ui.settings_panel import (
     SettingsFormValues,
     apply_form_values,
     form_values_from_config,
+    pairing_token_from_config,
     transport_indicator,
 )
 
@@ -78,3 +79,11 @@ def test_transport_indicator_usb_and_relay():
     text, color = transport_indicator(None)
     assert "ไม่เชื่อมต่อ" in text or "disconnected" in text.lower() or text
     assert color == "#667085"
+
+
+def test_pairing_token_from_config():
+    cfg = default_config()
+    cfg["chrome_bridge"]["pairing_token"] = "abc123deadbeef00abc123deadbeef00"
+    assert pairing_token_from_config(cfg) == "abc123deadbeef00abc123deadbeef00"
+    assert pairing_token_from_config({}) == ""
+    assert pairing_token_from_config({"chrome_bridge": {}}) == ""
