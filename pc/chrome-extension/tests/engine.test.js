@@ -11,6 +11,7 @@ const { JSDOM } = require('jsdom');
 
 const {
   normalize,
+  matchNeedles,
   deepFindByText,
   findRow,
   findConfirmButton,
@@ -75,6 +76,10 @@ describe('normalize', () => {
     assert.equal(normalize('1,347.00'), '1347.00');
     assert.equal(normalize('1347.00'), '1347.00');
   });
+
+  it('expands float amount needles', () => {
+    assert.deepEqual(matchNeedles('1175.0').sort(), ['1175', '1175.0', '1175.00'].sort());
+  });
 });
 
 describe('deepFindByText + findRow + findConfirmButton', () => {
@@ -95,6 +100,26 @@ describe('deepFindByText + findRow + findConfirmButton', () => {
     assert.equal(result.status, 'ok');
     assert.ok(result.row);
     assert.match(result.row.textContent, /ORD1001/);
+  });
+
+  it('finds a row by amount with comma thousands separator', () => {
+    const dom = new JSDOM(`<!doctype html><body>
+      <table>
+        <tr class="order-row"><td>A</td><td>1,517.00</td><td><button class="eye">view</button></td></tr>
+        <tr class="order-row"><td>B</td><td><span>1,175</span><span>.00</span></td><td><button class="eye">view</button></td></tr>
+      </table>
+    </body>`);
+    global.document = dom.window.document;
+    const profile = {
+      ...PROFILE,
+      row_selector_hints: ['tr.order-row', 'tr'],
+    };
+    const byFloat = findRow(profile, '1175.0');
+    assert.equal(byFloat.status, 'ok');
+    assert.match(byFloat.row.textContent, /1,175/);
+    const byOther = findRow(profile, '1517.00');
+    assert.equal(byOther.status, 'ok');
+    assert.match(byOther.row.textContent, /1,517/);
   });
 
   it('finds a row when ref has spaces or dashes', () => {

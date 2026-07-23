@@ -21,6 +21,21 @@
     return doc || (typeof document !== 'undefined' ? document : null);
   }
 
+  /** Expand amount/ref needles so 1175.0 matches 1,175.00 on the page. */
+  function matchNeedles(raw) {
+    const n = normalize(String(raw == null ? '' : raw));
+    if (!n) return [];
+    const out = new Set([n]);
+    if (/^\d+(\.\d+)?$/.test(n)) {
+      const num = Number(n);
+      if (!Number.isNaN(num)) {
+        out.add(num.toFixed(2));
+        out.add(String(Math.trunc(num)));
+      }
+    }
+    return [...out];
+  }
+
   function deepFindByText(root, needle, doc) {
     const hits = [];
     if (!root || !needle) return hits;
@@ -46,16 +61,32 @@
     const document = getDocument(doc);
     if (!document || !document.body) return { status: 'row_not_found' };
 
-    const needle = normalize(refNumber);
-    const hits = deepFindByText(document.body, needle, document);
+    const needles = matchNeedles(refNumber);
+    if (needles.length === 0) return { status: 'row_not_found' };
+
     const selector = rowSelector(profile);
-    const rows = [
-      ...new Set(
-        hits
-          .map((el) => (selector ? el.closest(selector) : el.parentElement))
-          .filter(Boolean)
-      ),
-    ];
+    const rowsFromLeaves = [];
+    for (const needle of needles) {
+      const hits = deepFindByText(document.body, needle, document);
+      for (const el of hits) {
+        const row = selector ? el.closest(selector) : el.parentElement;
+        if (row) rowsFromLeaves.push(row);
+      }
+    }
+    let rows = [...new Set(rowsFromLeaves)];
+
+    // Fallback: amount/ref may be split across child nodes — match whole row text.
+    if (rows.length === 0 && selector) {
+      try {
+        const candidates = [...document.querySelectorAll(selector)];
+        rows = candidates.filter((row) => {
+          const text = normalize(row.textContent || '');
+          return needles.some((needle) => text.includes(needle));
+        });
+      } catch (_) {
+        rows = [];
+      }
+    }
 
     if (rows.length === 0) return { status: 'row_not_found' };
     if (rows.length > 1) return { status: 'ambiguous' };
@@ -592,6 +623,7 @@
 
   return {
     normalize,
+    matchNeedles,
     deepFindByText,
     findRow,
     findConfirmButton,
