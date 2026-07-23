@@ -48,7 +48,15 @@ async def test_slip_event_phone_to_pc(client):
         async with client.ws_connect("/") as phone_ws:
             await phone_ws.send_json({"action": "subscribe", "target": "123456789"})
             await phone_ws.receive_json()
-            await pc_ws.receive_json()  # phone_joined
+
+            # Drain PC notifications until phone_joined (may interleave with counts).
+            joined = False
+            for _ in range(5):
+                notice = await asyncio.wait_for(pc_ws.receive_json(), timeout=2.0)
+                if notice.get("type") == "phone_joined":
+                    joined = True
+                    break
+            assert joined, "PC never received phone_joined"
 
             await phone_ws.send_json(
                 {
@@ -58,7 +66,12 @@ async def test_slip_event_phone_to_pc(client):
                 }
             )
 
-            msg = await asyncio.wait_for(pc_ws.receive_json(), timeout=1.0)
+            msg = None
+            for _ in range(5):
+                candidate = await asyncio.wait_for(pc_ws.receive_json(), timeout=2.0)
+                if candidate.get("type") == "slip_event":
+                    msg = candidate
+                    break
             assert msg == {
                 "type": "slip_event",
                 "payload": payload,
