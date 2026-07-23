@@ -25,13 +25,23 @@
   ];
 
   const BANK_ALIASES = {
-    SCB: ['ไทยพาณิชย์', 'SCB', 'Siam Commercial'],
-    KBANK: ['กสิกร', 'กสิกรไทย', 'KBank', 'KBANK'],
-    BBL: ['กรุงเทพ', 'BBL', 'Bangkok'],
-    KTB: ['กรุงไทย', 'KTB', 'Krungthai'],
-    GSB: ['ออมสิน', 'GSB'],
-    TTB: ['ทหารไทย', 'ธนชาต', 'TTB', 'ttb'],
-    BAY: ['กรุงศรี', 'BAY', 'Krungsri'],
+    SCB: ['ธนาคารไทยพาณิชย์', 'ไทยพาณิชย์', 'SCB', 'Siam Commercial'],
+    KBANK: ['ธนาคารกสิกรไทย', 'กสิกรไทย', 'กสิกร', 'KBank', 'KBANK'],
+    BBL: ['ธนาคารกรุงเทพ', 'กรุงเทพ', 'BBL', 'Bangkok'],
+    KTB: ['ธนาคารกรุงไทย', 'กรุงไทย', 'KTB', 'Krungthai'],
+    GSB: ['ธนาคารออมสิน', 'ออมสิน', 'GSB'],
+    TTB: ['ธนาคารทหารไทยธนชาต', 'ทหารไทย', 'ธนชาต', 'TTB', 'ttb'],
+    BAY: ['ธนาคารกรุงศรีอยุธยา', 'กรุงศรี', 'BAY', 'Krungsri'],
+  };
+
+  const BANK_FULL_TH = {
+    SCB: 'ธนาคารไทยพาณิชย์',
+    KBANK: 'ธนาคารกสิกรไทย',
+    BBL: 'ธนาคารกรุงเทพ',
+    KTB: 'ธนาคารกรุงไทย',
+    GSB: 'ธนาคารออมสิน',
+    TTB: 'ธนาคารทหารไทยธนชาต',
+    BAY: 'ธนาคารกรุงศรีอยุธยา',
   };
 
   function getDocument(doc) {
@@ -428,9 +438,52 @@
         return false;
       }
     }
-    if (!value) return false;
-    if (t.includes(value) || value.includes(t)) return true;
-    return bankMatchNeedles(value).some((n) => t.includes(n));
+    if (value == null || String(value).trim() === '') return false;
+    const v = String(value).replace(/\s+/g, ' ').trim();
+    // Last4 / account fragment: match if option contains the digits.
+    if (/^\d{4,}$/.test(v.replace(/\D/g, '')) && v.replace(/\D/g, '').length <= 6) {
+      const digits = v.replace(/\D/g, '');
+      return t.replace(/\D/g, '').endsWith(digits) || t.includes(digits);
+    }
+    if (t === v) return true;
+    if (t.includes(v) || v.includes(t)) return true;
+    return bankMatchNeedles(v).some((n) => t === n || t.includes(n));
+  }
+
+  function resolveSelectValue(step, context) {
+    if (step.match_text && !step.value_from) return step.match_text;
+    const paths = [];
+    if (step.value_from) paths.push(step.value_from);
+    if (step.value_from_fallbacks) paths.push(...step.value_from_fallbacks);
+    const from = String(step.value_from || '');
+    if (from.includes('bank')) {
+      paths.push('slip.bank_name_th', 'slip.bank_name', 'slip.bank');
+    }
+    if (from.includes('account')) {
+      paths.push(
+        'slip.account_number',
+        'slip.sender_account',
+        'slip.receiver_account',
+        'slip.receiver_account_last4'
+      );
+    }
+    for (const p of paths) {
+      const v = resolvePath(context, p);
+      if (v != null && String(v).trim() !== '') return v;
+    }
+    return step.match_text || null;
+  }
+
+  function pickBestOption(items, value, step) {
+    const matched = items.filter((el) => optionTextMatches(el.textContent, value, step));
+    if (!matched.length) return null;
+    // Prefer exact full-name match, then longest label (more specific), first wins for duplicates.
+    const exact = matched.filter((el) => String(el.textContent || '').trim() === String(value || '').trim());
+    if (exact.length) return exact[0];
+    matched.sort(
+      (a, b) => String(b.textContent || '').trim().length - String(a.textContent || '').trim().length
+    );
+    return matched[0];
   }
 
   function findFieldContainer(root, fieldHint) {
@@ -517,8 +570,28 @@
   async function selectOption(step, context, doc) {
     const document = getDocument(doc);
     const root = findScopeRoot(step, context, doc);
-    const value = step.value_from ? resolvePath(context, step.value_from) : step.match_text;
-    if (!value && !step.match_pattern) return { ok: false, reason: 'missing_select_value' };
+    let value = resolveSelectValue(step, context);
+    // Map bank codes → full Thai dropdown labels.
+    if (value != null && step.field_hint && String(step.field_hint).includes('ธนาคาร')) {
+      const upper = String(value).trim().toUpperCase();
+      if (BANK_FULL_TH[upper]) value = BANK_FULL_TH[upper];
+      else {
+        for (const [code, full] of Object.entries(BANK_FULL_TH)) {
+          if (bankMatchNeedles(value).some((n) => String(n).includes(code) || full.includes(String(n)))) {
+            value = full;
+            break;
+          }
+        }
+      }
+    }
+    if ((value == null || String(value).trim() === '') && !step.match_pattern) {
+      if (step.fallback_match_pattern) {
+        step = { ...step, match_pattern: step.fallback_match_pattern };
+        value = null;
+      } else {
+        return { ok: false, reason: 'missing_select_value' };
+      }
+    }
 
     let select = null;
     const fieldBox = step.field_hint ? findFieldContainer(root, step.field_hint) : null;
@@ -533,11 +606,25 @@
     }
 
     if (select) {
-      const opt = [...select.options].find((o) => optionTextMatches(o.textContent || o.value, value, step));
-      if (!opt) return { ok: false, reason: 'option_not_found' };
-      select.value = opt.value;
+      const native = [...select.options].find((o) => optionTextMatches(o.textContent || o.value, value, step));
+      if (!native) {
+        if (step.fallback_match_pattern) {
+          const fb = [...select.options].find((o) =>
+            optionTextMatches(o.textContent || o.value, null, {
+              ...step,
+              match_pattern: step.fallback_match_pattern,
+            })
+          );
+          if (!fb) return { ok: false, reason: 'option_not_found' };
+          select.value = fb.value;
+          select.dispatchEvent(domEvent(select, 'change'));
+          return { ok: true, matched: fb.textContent };
+        }
+        return { ok: false, reason: 'option_not_found' };
+      }
+      select.value = native.value;
       select.dispatchEvent(domEvent(select, 'change'));
-      return { ok: true };
+      return { ok: true, matched: native.textContent };
     }
 
     // Element UI / custom dropdown
@@ -577,14 +664,17 @@
           '.el-select-dropdown__item, .el-scrollbar__view li, [role="option"], .dropdown-menu li, li'
         ),
       ].filter((el) => isVisible(el));
-      item = items.find((el) => optionTextMatches(el.textContent, value, step));
+      item = pickBestOption(items, value, step);
+      if (!item && step.fallback_match_pattern) {
+        item = pickBestOption(items, null, { ...step, match_pattern: step.fallback_match_pattern });
+      }
       if (item) break;
       await sleep(50);
     }
-    if (!item) return { ok: false, reason: 'option_not_found' };
+    if (!item) return { ok: false, reason: 'option_not_found', tried_value: value };
     dispatchClick(item);
     await sleep(150);
-    return { ok: true };
+    return { ok: true, matched: (item.textContent || '').trim() };
   }
 
   function scrollIntoViewStep(step, context, doc) {

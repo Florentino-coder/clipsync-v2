@@ -91,14 +91,24 @@ const BUNDLED_SITE_PROFILES = [
         "scope": "popup",
         "field_hint": "ชื่อธนาคาร",
         "value_from": "slip.bank_name_th",
-        "timeout_ms": 5000
+        "value_from_fallbacks": [
+          "slip.bank_name",
+          "slip.bank"
+        ],
+        "timeout_ms": 6000
       },
       {
         "action": "select_option",
         "scope": "popup",
         "field_hint": "หมายเลขบัญชี",
-        "match_pattern": "^[0-9]{8,}$",
-        "timeout_ms": 5000
+        "value_from": "slip.sender_account",
+        "value_from_fallbacks": [
+          "slip.account_number",
+          "slip.receiver_account_last4",
+          "slip.receiver_account"
+        ],
+        "fallback_match_pattern": "^[0-9]{8,}$",
+        "timeout_ms": 6000
       },
       {
         "action": "click",

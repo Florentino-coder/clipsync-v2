@@ -62,20 +62,27 @@ function showResultBanner(ok, detail) {
 
   function enrichSlip(slip) {
     const out = slip && typeof slip === 'object' ? { ...slip } : {};
-    const raw = String(out.bank_name_th || out.bank_name || '').trim();
+    const raw = String(out.bank_name_th || out.bank_name || out.bank || '').trim();
     const upper = raw.toUpperCase();
     const map = {
-      SCB: 'ไทยพาณิชย์',
-      KBANK: 'กสิกร',
-      BBL: 'กรุงเทพ',
-      KTB: 'กรุงไทย',
-      GSB: 'ออมสิน',
-      TTB: 'ทหารไทย',
-      BAY: 'กรุงศรี',
+      SCB: 'ธนาคารไทยพาณิชย์',
+      KBANK: 'ธนาคารกสิกรไทย',
+      BBL: 'ธนาคารกรุงเทพ',
+      KTB: 'ธนาคารกรุงไทย',
+      GSB: 'ธนาคารออมสิน',
+      TTB: 'ธนาคารทหารไทยธนชาต',
+      BAY: 'ธนาคารกรุงศรีอยุธยา',
     };
-    if (upper === 'KBANK' || upper === 'K-BANK') out.bank_name_th = 'กสิกร';
-    else if (!out.bank_name_th) out.bank_name_th = map[upper] || raw;
-    else if (map[upper]) out.bank_name_th = map[upper];
+    if (map[upper]) out.bank_name_th = map[upper];
+    else if (!out.bank_name_th && raw) {
+      // Already Thai / partial — keep; engine aliases still match.
+      out.bank_name_th = raw.startsWith('ธนาคาร') ? raw : raw;
+    }
+    if (!out.bank_name && out.bank) out.bank_name = out.bank;
+    if (!out.receiver_account_last4 && out.receiverAccountLast4) {
+      out.receiver_account_last4 = out.receiverAccountLast4;
+    }
+    if (!out.sender_name && out.senderName) out.sender_name = out.senderName;
     return out;
   }
 

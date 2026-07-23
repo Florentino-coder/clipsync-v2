@@ -870,15 +870,27 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
             k: event.get(k)
             for k in (
                 "amount",
+                "bank",
                 "bank_name",
                 "bank_name_th",
                 "account_number",
                 "ref_number",
                 "sender",
+                "sender_name",
+                "sender_account",
                 "receiver",
+                "receiver_account",
+                "receiver_account_last4",
             )
             if event.get(k) is not None
         }
+        # Normalize alternate keys from mobile OCR payload.
+        if "bank_name" not in slip_payload and event.get("bank"):
+            slip_payload["bank_name"] = event.get("bank")
+        if "receiver_account_last4" not in slip_payload and event.get("receiverAccountLast4"):
+            slip_payload["receiver_account_last4"] = event.get("receiverAccountLast4")
+        if "sender_name" not in slip_payload and event.get("senderName"):
+            slip_payload["sender_name"] = event.get("senderName")
         match_key = order_id or ref_number or amount
         record = {
             "event_id": event.get("event_id"),
