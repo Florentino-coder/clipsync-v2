@@ -4,6 +4,7 @@ import 'package:crypto/crypto.dart';
 
 import 'slip_event.dart';
 import 'slip_store.dart';
+import 'slip_thumbnail.dart';
 
 /// Sends a framed slip message over the active transport (USB WS or relay).
 typedef SlipSendFn = Future<void> Function(Map<String, dynamic> message);
@@ -80,6 +81,11 @@ class SlipOutbox {
     };
     if (forRelay) {
       message['sig'] = signSlipPayload(sharedSecret, payload);
+    }
+    // Thumbnail is outside the signed OCR payload (keeps HMAC stable/small).
+    final thumb = makeThumbnailJpegBase64(event.localImagePath);
+    if (thumb != null && thumb.isNotEmpty) {
+      message['thumbnail_jpeg_b64'] = thumb;
     }
     return message;
   }

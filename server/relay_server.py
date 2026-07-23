@@ -228,14 +228,16 @@ async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
                 if pc is None:
                     continue
 
-                await send(
-                    pc,
-                    {
-                        "type": "slip_event",
-                        "payload": msg.get("payload"),
-                        "sig": msg.get("sig", ""),
-                    },
-                )
+                forward = {
+                    "type": "slip_event",
+                    "payload": msg.get("payload"),
+                    "sig": msg.get("sig", ""),
+                }
+                thumb = msg.get("thumbnail_jpeg_b64")
+                if isinstance(thumb, str) and thumb:
+                    forward["thumbnail_jpeg_b64"] = thumb
+
+                await send(pc, forward)
 
                 log.info("SLIP  phone -> %s", fmt(sub_id))
 

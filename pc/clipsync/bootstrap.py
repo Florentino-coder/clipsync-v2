@@ -181,7 +181,9 @@ class SlipBootstrap:
                 source="relay",
                 sig=sig,
             )
-            self._push_ui_event(payload, result)
+            thumb = msg.get("thumbnail_jpeg_b64")
+            thumb_s = thumb if isinstance(thumb, str) else None
+            self._push_ui_event(payload, result, thumbnail_jpeg_b64=thumb_s)
 
         return _handle
 
@@ -196,13 +198,21 @@ class SlipBootstrap:
     def _on_transport_changed(self, old: Optional[str], new: str) -> None:
         self._app.after(0, lambda: self._app.on_transport_changed(old, new))
 
-    def _push_ui_event(self, payload: dict[str, Any], result: dict[str, Any]) -> None:
-        ui_event = {
-            **payload,
-            "decision": result.get("decision"),
-            "order_id": result.get("order_id"),
-            "transport": self._manager.transport_name if self._manager else None,
-        }
+    def _push_ui_event(
+        self,
+        payload: dict[str, Any],
+        result: dict[str, Any],
+        *,
+        thumbnail_jpeg_b64: Optional[str] = None,
+    ) -> None:
+        from clipsync.slip_image import ui_event_with_thumbnail
+
+        ui_event = ui_event_with_thumbnail(
+            payload,
+            result,
+            thumbnail_jpeg_b64=thumbnail_jpeg_b64,
+            transport=self._manager.transport_name if self._manager else None,
+        )
 
         def _enqueue() -> None:
             self._app.push_slip_ui_event(ui_event)

@@ -142,6 +142,9 @@ class SlipBootstrap {
         'action': 'slip_event',
         'payload': message['payload'],
         'sig': message['sig'],
+        if (message['thumbnail_jpeg_b64'] is String &&
+            (message['thumbnail_jpeg_b64'] as String).isNotEmpty)
+          'thumbnail_jpeg_b64': message['thumbnail_jpeg_b64'],
       }),
     );
   }

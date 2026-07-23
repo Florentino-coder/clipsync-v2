@@ -6,6 +6,7 @@ import 'package:clipsync_app/slip/slip_event.dart';
 import 'package:clipsync_app/slip/slip_store.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as img;
 
 const _secret = 'test-secret-key-32chars!!!!!!!!';
 
@@ -122,6 +123,35 @@ void main() {
     final payload = Map<String, dynamic>.from(message['payload'] as Map);
     expect(message['sig'], _expectedSig(payload));
     expect(signSlipPayload(_secret, payload), _expectedSig(payload));
+  });
+
+  test('relay message may include thumbnail outside signed payload', () async {
+    final big = img.Image(width: 200, height: 300);
+    img.fill(big, color: img.ColorRgb8(10, 20, 30));
+    final path = '${tempDir.path}/slip.png';
+    await File(path).writeAsBytes(img.encodePng(big));
+
+    final event = SlipEvent(
+      eventId: 'evt-thumb',
+      capturedAt: '2026-07-22T12:00:00+07:00',
+      bank: 'SCB',
+      amount: 100.0,
+      senderName: null,
+      receiverAccountLast4: '1234',
+      refNumber: 'R1',
+      ocrConfidence: 0.9,
+      parseFailed: false,
+      localImagePath: path,
+    );
+
+    await outbox.enqueue(event, forRelay: true);
+
+    final message = sent.single;
+    final payload = Map<String, dynamic>.from(message['payload'] as Map);
+    expect(payload.containsKey('thumbnail_jpeg_b64'), isFalse);
+    expect(message['sig'], _expectedSig(payload));
+    expect(message['thumbnail_jpeg_b64'], isA<String>());
+    expect((message['thumbnail_jpeg_b64'] as String).isNotEmpty, isTrue);
   });
 
   test('ack for unknown event_id is ignored', () async {

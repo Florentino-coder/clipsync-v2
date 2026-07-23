@@ -790,9 +790,33 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
         if messagebox is None:
             return
         event_id = event.get("event_id") or "-"
+        thumb = event.get("thumbnail_jpeg_b64")
+        if isinstance(thumb, str) and thumb:
+            try:
+                from clipsync.slip_image import decode_thumbnail_jpeg
+                from PIL import Image, ImageTk
+                import io
+
+                raw = decode_thumbnail_jpeg(thumb)
+                if raw is None:
+                    raise ValueError("bad thumbnail")
+                img = Image.open(io.BytesIO(raw))
+                top = tk.Toplevel(self)
+                top.title(f"สลิป {event_id}")
+                photo = ImageTk.PhotoImage(img)
+                top._photo = photo  # type: ignore[attr-defined]  # keep ref
+                ttk.Label(top, image=photo).pack(padx=8, pady=8)
+                return
+            except Exception as exc:
+                messagebox.showwarning(
+                    "ดูรูปสลิป",
+                    f"มี thumbnail แต่เปิดไม่ได้: {exc}",
+                )
+                return
         messagebox.showinfo(
             "ดูรูปสลิป",
-            f"ยังไม่มีรูปสำหรับ event {event_id}\n(ต้องเชื่อม USB + slip_fetcher)",
+            f"ยังไม่มีรูปสำหรับ event {event_id}\n"
+            "(รอสลิปใหม่หลังอัปเดตแอป หรือเชื่อม USB + slip_fetcher)",
         )
 
     def _on_slip_manual_confirm(self, event: Mapping[str, Any]) -> None:
