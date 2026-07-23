@@ -78,8 +78,7 @@ class SlipBootstrap {
 
     await Permission.photos.request();
 
-    _store = SlipStore();
-    await _store!.init();
+    _store = await SlipStore.open();
 
     _outbox = SlipOutbox(
       store: _store!,
@@ -95,7 +94,7 @@ class SlipBootstrap {
     await _localServer!.start(port: LocalSlipServer.defaultPort);
 
     _pipeline = SlipPipeline(
-      ocr: SlipOcr(),
+      ocr: MlKitSlipOcr(),
       store: _store!,
       outbox: _outbox,
       outboxForRelay: true,
