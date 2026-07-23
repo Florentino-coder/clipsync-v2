@@ -544,7 +544,9 @@
     const clickEl =
       trigger.querySelector('.el-input__inner, .el-select__wrapper, input, button, .dropdown-toggle') ||
       trigger;
-    clickEl.scrollIntoView({ block: 'center', inline: 'nearest' });
+    if (typeof clickEl.scrollIntoView === 'function') {
+      clickEl.scrollIntoView({ block: 'center', inline: 'nearest' });
+    }
     dispatchClick(clickEl);
 
     const timeout = step.timeout_ms || 4000;
@@ -578,7 +580,9 @@
     }
     if (!target) return { ok: false, reason: 'scroll_target_not_found' };
     try {
-      target.scrollIntoView({ block: 'center', inline: 'nearest' });
+      if (typeof target.scrollIntoView === 'function') {
+        target.scrollIntoView({ block: 'center', inline: 'nearest' });
+      }
     } catch (_) {
       /* ignore */
     }
@@ -607,7 +611,9 @@
     }
     if (!input) input = root.querySelector('input[type="checkbox"]');
     if (!input) return { ok: false, reason: 'checkbox_not_found' };
-    input.scrollIntoView({ block: 'center', inline: 'nearest' });
+    if (typeof input.scrollIntoView === 'function') {
+      input.scrollIntoView({ block: 'center', inline: 'nearest' });
+    }
     if (!input.checked) {
       dispatchClick(input);
       if (!input.checked) {
