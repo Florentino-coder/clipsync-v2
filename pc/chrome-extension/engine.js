@@ -230,22 +230,25 @@
   function dispatchClick(el) {
     const target = clickableTarget(el);
     if (!target) return false;
+    // Prefer a single native click — dispatching MouseEvent AND .click() toggles twice.
+    try {
+      target.click();
+      return true;
+    } catch (_) {
+      /* fall through */
+    }
     try {
       const view = target.ownerDocument && target.ownerDocument.defaultView;
       if (view && view.MouseEvent) {
         target.dispatchEvent(
           new view.MouseEvent('click', { bubbles: true, cancelable: true, view, buttons: 1 })
         );
+        return true;
       }
-    } catch (_) {
-      /* fall through to .click() */
-    }
-    try {
-      target.click();
     } catch (_) {
       return false;
     }
-    return true;
+    return false;
   }
 
   function resolvePath(obj, path) {
@@ -356,10 +359,26 @@
 
   function isVisible(el) {
     if (!el) return false;
+    if (el.hidden) return false;
+    const styleAttr = (el.getAttribute && el.getAttribute('style')) || '';
+    if (/display\s*:\s*none/i.test(styleAttr) || /visibility\s*:\s*hidden/i.test(styleAttr)) {
+      return false;
+    }
+    let cur = el;
+    while (cur && cur.nodeType === 1) {
+      if (cur.hidden) return false;
+      const aria = cur.getAttribute && cur.getAttribute('aria-hidden');
+      if (aria === 'true') return false;
+      cur = cur.parentElement;
+    }
     try {
       if (el.getClientRects && el.getClientRects().length > 0) return true;
     } catch (_) {
       /* ignore */
+    }
+    // jsdom often has no layout — treat as visible if not explicitly hidden.
+    if (typeof el.offsetParent === 'undefined' || el.offsetParent === null) {
+      return true;
     }
     return Boolean(el.offsetParent);
   }
