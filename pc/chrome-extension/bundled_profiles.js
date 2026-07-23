@@ -66,7 +66,13 @@ const BUNDLED_SITE_PROFILES = [
       {
         "action": "scroll_into_view",
         "scope": "popup",
-        "match_text": "โอนเงินทางบัญชี|โอนเงินเรียบร้อยแล้ว"
+        "match_text": "โอนเงินทางบัญชี|โอนเงินเรียบร้อยแล้ว|สถานะการถอน|เริ่มการถอนออโต้"
+      },
+      {
+        "action": "wait_for",
+        "scope": "popup",
+        "match_text": "โอนเงินเรียบร้อยแล้ว|สถานะการถอน",
+        "timeout_ms": 5000
       },
       {
         "action": "check",

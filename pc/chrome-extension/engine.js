@@ -590,25 +590,73 @@
   function scrollIntoViewStep(step, context, doc) {
     const document = getDocument(doc);
     const root = findScopeRoot(step, context, doc);
-    let target = findStepTarget(step, context, document);
-    if (!target && step.match_text) {
-      const nodes = [...root.querySelectorAll('div, span, h1, h2, h3, h4, label, section')].filter((el) =>
-        textMatches(el, step.match_text)
-      );
-      target = nodes.sort((a, b) => (a.textContent || '').length - (b.textContent || '').length)[0] || null;
+
+    function findMatch(scope) {
+      if (!scope || !step.match_text) return null;
+      const matches = [...scope.querySelectorAll('*')].filter((el) => textMatches(el, step.match_text));
+      if (!matches.length) return null;
+      matches.sort((a, b) => (a.textContent || '').length - (b.textContent || '').length);
+      return matches[0];
     }
-    if (!target) return { ok: false, reason: 'scroll_target_not_found' };
-    try {
-      if (typeof target.scrollIntoView === 'function') {
-        target.scrollIntoView({ block: 'center', inline: 'nearest' });
+
+    function scrollableParent(el) {
+      if (!el) return null;
+      const body =
+        (el.querySelector &&
+          (el.querySelector('.el-dialog__body') ||
+            el.querySelector('.modal-body') ||
+            el.querySelector('[class*="dialog__body"]'))) ||
+        null;
+      if (body) return body;
+      if (el.closest) {
+        const nested = el.closest('.el-dialog__body, .modal-body, [class*="dialog__body"]');
+        if (nested) return nested;
       }
-    } catch (_) {
-      /* ignore */
+      return el;
     }
-    const dialogBody = target.closest('.el-dialog__body, .modal-body, [class*="dialog"]');
-    if (dialogBody && typeof dialogBody.scrollTop === 'number') {
-      const top = target.getBoundingClientRect().top - dialogBody.getBoundingClientRect().top;
-      dialogBody.scrollTop += top - 40;
+
+    function doScroll(el) {
+      if (!el) return;
+      try {
+        if (typeof el.scrollIntoView === 'function') {
+          el.scrollIntoView({ block: 'center', inline: 'nearest' });
+        }
+      } catch (_) {
+        /* ignore */
+      }
+      const box = scrollableParent(root) || scrollableParent(el);
+      if (box && typeof box.scrollTop === 'number') {
+        try {
+          const top = el.getBoundingClientRect().top - box.getBoundingClientRect().top;
+          box.scrollTop += top - 48;
+        } catch (_) {
+          box.scrollTop = box.scrollHeight;
+        }
+      }
+    }
+
+    let target = findStepTarget(step, context, document) || findMatch(root);
+    if (!target && root !== document.body) target = findMatch(document.body);
+
+    const box = scrollableParent(root);
+    if (!target) {
+      // Form is below the fold — scroll popup body to bottom even if text not matched yet.
+      if (box && typeof box.scrollTop === 'number') {
+        box.scrollTop = box.scrollHeight;
+        target = findMatch(root) || findMatch(document.body);
+        if (target) {
+          doScroll(target);
+          return { ok: true, matched_after_scroll: true };
+        }
+        return { ok: true, scrolled_to_bottom: true };
+      }
+      return { ok: false, reason: 'scroll_target_not_found' };
+    }
+
+    doScroll(target);
+    if (box && typeof box.scrollTop === 'number' && box.scrollHeight > box.clientHeight + 20) {
+      // Nudge further down — transfer form sits under the approval block.
+      box.scrollTop = Math.min(box.scrollTop + 400, box.scrollHeight);
     }
     return { ok: true };
   }
@@ -730,7 +778,12 @@
         const start = Date.now();
         while (Date.now() - start < timeout) {
           const root = findScopeRoot(step, context, document);
-          if (queryByHints(root, hints).length > 0) return { ok: true };
+          if (step.match_text) {
+            const hit = [...root.querySelectorAll('*')].some((el) => textMatches(el, step.match_text));
+            if (hit) return { ok: true };
+          } else if (queryByHints(root, hints).length > 0) {
+            return { ok: true };
+          }
           await new Promise((r) => setTimeout(r, 50));
         }
         return { ok: false, reason: 'wait_for_timeout' };
