@@ -223,10 +223,11 @@ function mergeBundledProfiles(existing) {
   const byId = new Map(list.map((p) => [p && p.profile_id, p]));
   for (const profile of bundled) {
     if (!profile || !profile.profile_id) continue;
-    if (!byId.has(profile.profile_id)) {
-      list.push(profile);
-      byId.set(profile.profile_id, profile);
-    }
+    // Bundled copy wins so selector/workflow fixes ship on Reload.
+    const idx = list.findIndex((p) => p && p.profile_id === profile.profile_id);
+    if (idx >= 0) list[idx] = profile;
+    else list.push(profile);
+    byId.set(profile.profile_id, profile);
   }
   return list;
 }
