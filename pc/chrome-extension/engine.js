@@ -15,7 +15,24 @@
   // Strip spaces, dashes, and thousands separators so 1,347.00 matches 1347.00
   const normalize = (s) => (s || '').replace(/[\s\-,\u00a0]/g, '');
 
-  const POPUP_SCOPE_HINTS = ["[class*='modal']", "[class*='popup']", 'dialog', "[role='dialog']"];
+  const POPUP_SCOPE_HINTS = [
+    '.el-dialog__wrapper .el-dialog',
+    '.el-dialog',
+    "[class*='modal']",
+    "[class*='popup']",
+    'dialog',
+    "[role='dialog']",
+  ];
+
+  const BANK_ALIASES = {
+    SCB: ['ไทยพาณิชย์', 'SCB', 'Siam Commercial'],
+    KBANK: ['กสิกร', 'กสิกรไทย', 'KBank', 'KBANK'],
+    BBL: ['กรุงเทพ', 'BBL', 'Bangkok'],
+    KTB: ['กรุงไทย', 'KTB', 'Krungthai'],
+    GSB: ['ออมสิน', 'GSB'],
+    TTB: ['ทหารไทย', 'ธนชาต', 'TTB', 'ttb'],
+    BAY: ['กรุงศรี', 'BAY', 'Krungsri'],
+  };
 
   function getDocument(doc) {
     return doc || (typeof document !== 'undefined' ? document : null);
@@ -333,12 +350,32 @@
     };
   }
 
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  function isVisible(el) {
+    if (!el) return false;
+    try {
+      if (el.getClientRects && el.getClientRects().length > 0) return true;
+    } catch (_) {
+      /* ignore */
+    }
+    return Boolean(el.offsetParent);
+  }
+
   function findScopeRoot(step, context, doc) {
     const document = getDocument(doc);
     if (step.scope === 'popup') {
       for (const hint of POPUP_SCOPE_HINTS) {
-        const el = document.querySelector(hint);
-        if (el) return el;
+        let els = [];
+        try {
+          els = [...document.querySelectorAll(hint)];
+        } catch (_) {
+          els = [];
+        }
+        const visible = els.find((el) => isVisible(el));
+        if (visible) return visible;
       }
       return document.body;
     }
@@ -346,6 +383,51 @@
       return context.row || document.body;
     }
     return document.body;
+  }
+
+  function bankMatchNeedles(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return [];
+    const out = new Set([raw]);
+    const upper = raw.toUpperCase();
+    for (const [code, aliases] of Object.entries(BANK_ALIASES)) {
+      if (upper === code || upper.includes(code) || aliases.some((a) => raw.includes(a) || upper.includes(String(a).toUpperCase()))) {
+        aliases.forEach((a) => out.add(a));
+        out.add(code);
+      }
+    }
+    return [...out];
+  }
+
+  function optionTextMatches(text, value, step) {
+    const t = String(text || '').replace(/\s+/g, ' ').trim();
+    if (!t || t.includes('กรุณาเลือก')) return false;
+    if (step && step.match_pattern) {
+      try {
+        return new RegExp(step.match_pattern).test(t);
+      } catch (_) {
+        return false;
+      }
+    }
+    if (!value) return false;
+    if (t.includes(value) || value.includes(t)) return true;
+    return bankMatchNeedles(value).some((n) => t.includes(n));
+  }
+
+  function findFieldContainer(root, fieldHint) {
+    if (!root || !fieldHint) return null;
+    const labeled = [...root.querySelectorAll('.el-form-item, .form-group, label, div')];
+    for (const el of labeled) {
+      const labelEl = el.querySelector('.el-form-item__label, label, .control-label');
+      const labelText = labelEl ? labelEl.textContent || '' : '';
+      // Prefer short label text over giant containers.
+      if (labelText.includes(fieldHint) && labelText.length < 80) return el;
+    }
+    for (const el of labeled) {
+      const own = (el.childNodes && el.childNodes[0] && el.childNodes[0].textContent) || '';
+      if (own.includes(fieldHint) && own.length < 80) return el;
+    }
+    return null;
   }
 
   function textMatches(el, pattern) {
@@ -413,13 +495,16 @@
     return { type, bubbles: true };
   }
 
-  function selectOption(step, context, doc) {
+  async function selectOption(step, context, doc) {
+    const document = getDocument(doc);
     const root = findScopeRoot(step, context, doc);
     const value = step.value_from ? resolvePath(context, step.value_from) : step.match_text;
-    if (!value) return { ok: false, reason: 'missing_select_value' };
+    if (!value && !step.match_pattern) return { ok: false, reason: 'missing_select_value' };
 
     let select = null;
-    if (step.field_hint) {
+    const fieldBox = step.field_hint ? findFieldContainer(root, step.field_hint) : null;
+    if (fieldBox) select = fieldBox.querySelector('select');
+    else if (step.field_hint) {
       const labels = [...root.querySelectorAll('label')].filter((l) =>
         (l.textContent || '').includes(step.field_hint)
       );
@@ -429,36 +514,109 @@
     }
 
     if (select) {
-      const opt = [...select.options].find(
-        (o) => (o.textContent || '').includes(value) || o.value === value
-      );
+      const opt = [...select.options].find((o) => optionTextMatches(o.textContent || o.value, value, step));
       if (!opt) return { ok: false, reason: 'option_not_found' };
       select.value = opt.value;
       select.dispatchEvent(domEvent(select, 'change'));
       return { ok: true };
     }
 
-    let dropdown = null;
-    if (step.field_hint) {
+    // Element UI / custom dropdown
+    let trigger =
+      (fieldBox &&
+        fieldBox.querySelector(
+          '.el-select, .el-select__wrapper, [class*="select"], .custom-dropdown, [class*="dropdown"]'
+        )) ||
+      null;
+    if (!trigger && step.field_hint) {
       const labels = [...root.querySelectorAll('label')].filter((l) =>
         (l.textContent || '').includes(step.field_hint)
       );
       if (labels.length) {
-        dropdown = labels[0].querySelector('.custom-dropdown, [class*="dropdown"]');
+        trigger = labels[0].querySelector('.el-select, .custom-dropdown, [class*="dropdown"], [class*="select"]');
       }
     }
-    if (!dropdown) dropdown = root.querySelector('.custom-dropdown, [class*="dropdown"]');
-    if (dropdown) {
-      const toggle = dropdown.querySelector('button, .dropdown-toggle') || dropdown;
-      toggle.click();
-      const items = [...dropdown.querySelectorAll('li, [role="option"], button')];
-      const item = items.find((el) => (el.textContent || '').includes(value));
-      if (!item) return { ok: false, reason: 'dropdown_option_not_found' };
-      item.click();
-      return { ok: true };
+    if (!trigger) {
+      trigger = root.querySelector('.el-select, .custom-dropdown, [class*="dropdown"]');
     }
+    if (!trigger) return { ok: false, reason: 'select_control_not_found' };
 
-    return { ok: false, reason: 'select_control_not_found' };
+    const clickEl =
+      trigger.querySelector('.el-input__inner, .el-select__wrapper, input, button, .dropdown-toggle') ||
+      trigger;
+    clickEl.scrollIntoView({ block: 'center', inline: 'nearest' });
+    dispatchClick(clickEl);
+
+    const timeout = step.timeout_ms || 4000;
+    const start = Date.now();
+    let item = null;
+    while (Date.now() - start < timeout) {
+      const items = [
+        ...document.querySelectorAll(
+          '.el-select-dropdown__item, .el-scrollbar__view li, [role="option"], .dropdown-menu li, li'
+        ),
+      ].filter((el) => isVisible(el));
+      item = items.find((el) => optionTextMatches(el.textContent, value, step));
+      if (item) break;
+      await sleep(50);
+    }
+    if (!item) return { ok: false, reason: 'option_not_found' };
+    dispatchClick(item);
+    await sleep(150);
+    return { ok: true };
+  }
+
+  function scrollIntoViewStep(step, context, doc) {
+    const document = getDocument(doc);
+    const root = findScopeRoot(step, context, doc);
+    let target = findStepTarget(step, context, document);
+    if (!target && step.match_text) {
+      const nodes = [...root.querySelectorAll('div, span, h1, h2, h3, h4, label, section')].filter((el) =>
+        textMatches(el, step.match_text)
+      );
+      target = nodes.sort((a, b) => (a.textContent || '').length - (b.textContent || '').length)[0] || null;
+    }
+    if (!target) return { ok: false, reason: 'scroll_target_not_found' };
+    try {
+      target.scrollIntoView({ block: 'center', inline: 'nearest' });
+    } catch (_) {
+      /* ignore */
+    }
+    const dialogBody = target.closest('.el-dialog__body, .modal-body, [class*="dialog"]');
+    if (dialogBody && typeof dialogBody.scrollTop === 'number') {
+      const top = target.getBoundingClientRect().top - dialogBody.getBoundingClientRect().top;
+      dialogBody.scrollTop += top - 40;
+    }
+    return { ok: true };
+  }
+
+  function checkStep(step, context, doc) {
+    const root = findScopeRoot(step, context, doc);
+    let input = null;
+    if (step.match_text) {
+      const labels = [...root.querySelectorAll('label, .el-checkbox, span, div')].filter((el) =>
+        textMatches(el, step.match_text)
+      );
+      for (const el of labels) {
+        input = el.querySelector('input[type="checkbox"]') || (el.tagName === 'INPUT' ? el : null);
+        if (input) break;
+        const nearby = el.closest('label, .el-checkbox');
+        if (nearby) input = nearby.querySelector('input[type="checkbox"]');
+        if (input) break;
+      }
+    }
+    if (!input) input = root.querySelector('input[type="checkbox"]');
+    if (!input) return { ok: false, reason: 'checkbox_not_found' };
+    input.scrollIntoView({ block: 'center', inline: 'nearest' });
+    if (!input.checked) {
+      dispatchClick(input);
+      if (!input.checked) {
+        input.checked = true;
+        input.dispatchEvent(domEvent(input, 'change'));
+        input.dispatchEvent(domEvent(input, 'input'));
+      }
+    }
+    return { ok: true };
   }
 
   function verifyOrFill(step, context, doc) {
@@ -554,6 +712,10 @@
       }
       case 'select_option':
         return selectOption(step, context, document);
+      case 'scroll_into_view':
+        return scrollIntoViewStep(step, context, document);
+      case 'check':
+        return checkStep(step, context, document);
       case 'verify_or_fill':
         return verifyOrFill(step, context, document);
       case 'verify_result':

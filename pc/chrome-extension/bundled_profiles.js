@@ -56,51 +56,79 @@ const BUNDLED_SITE_PROFILES = [
       {
         "action": "wait_for",
         "selector_hints": [
+          ".el-dialog",
           "[class*='modal']",
           "[class*='dialog']",
-          "[class*='popup']",
-          ".el-dialog",
-          ".el-drawer"
+          "[role='dialog']"
         ],
         "timeout_ms": 10000
       },
       {
-        "action": "select_option",
+        "action": "scroll_into_view",
         "scope": "popup",
-        "match_text": "สำเร็จ"
+        "match_text": "โอนเงินทางบัญชี|โอนเงินเรียบร้อยแล้ว"
+      },
+      {
+        "action": "check",
+        "scope": "popup",
+        "match_text": "โอนเงินเรียบร้อยแล้ว"
       },
       {
         "action": "select_option",
         "scope": "popup",
-        "field_hint": "ธนาคาร",
-        "value_from": "slip.bank_name_th"
+        "field_hint": "สถานะการถอน",
+        "match_text": "สำเร็จ",
+        "timeout_ms": 5000
       },
       {
-        "action": "verify_or_fill",
+        "action": "select_option",
         "scope": "popup",
-        "field_hint": "เลขบัญชี",
-        "value_from": "slip.account_number"
+        "field_hint": "ชื่อธนาคาร",
+        "value_from": "slip.bank_name_th",
+        "timeout_ms": 5000
+      },
+      {
+        "action": "select_option",
+        "scope": "popup",
+        "field_hint": "หมายเลขบัญชี",
+        "match_pattern": "^[0-9]{8,}$",
+        "timeout_ms": 5000
       },
       {
         "action": "click",
         "scope": "popup",
-        "match_text": "ยืนยัน|บันทึก|ตกลง|Submit"
+        "match_text": "บันทึก"
+      },
+      {
+        "action": "wait_for",
+        "selector_hints": [
+          ".el-message-box",
+          ".el-dialog",
+          "[class*='message-box']",
+          "[role='dialog']"
+        ],
+        "timeout_ms": 8000
+      },
+      {
+        "action": "click",
+        "scope": "popup",
+        "match_text": "ตกลง"
       },
       {
         "action": "verify_result",
         "indicators": [
-          "ปิดงานสำเร็จ",
-          "สำเร็จ",
-          "success"
+          "บันทึก รายการถอน สำเร็จ",
+          "รายการถอน สำเร็จ",
+          "ปิดงานสำเร็จ"
         ],
         "timeout_ms": 15000
       }
     ],
     "_notes": [
-      "Target page: https://manage.jinbao356.com/withdraw/transaction?tab=1",
-      "dry_run=true — extension outlines clicks only, does not submit.",
-      "Tune selectors after first dry-run on a real withdrawal row.",
-      "API list_pending left out until partner XHR/HAR is captured."
+      "Target page: https://manage.jinbao356.com/withdraw/transaction",
+      "Close-job form is below the fold in the withdrawal modal — scroll_into_view first.",
+      "Shop payout account is selected by first numeric หมายเลขบัญชี option after bank.",
+      "Keep dry_run true until live clicks are verified end-to-end."
     ]
   }
 ];

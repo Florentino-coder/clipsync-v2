@@ -60,6 +60,25 @@ function showResultBanner(ok, detail) {
     return list[0] || null;
   }
 
+  function enrichSlip(slip) {
+    const out = slip && typeof slip === 'object' ? { ...slip } : {};
+    const raw = String(out.bank_name_th || out.bank_name || '').trim();
+    const upper = raw.toUpperCase();
+    const map = {
+      SCB: 'ไทยพาณิชย์',
+      KBANK: 'กสิกร',
+      BBL: 'กรุงเทพ',
+      KTB: 'กรุงไทย',
+      GSB: 'ออมสิน',
+      TTB: 'ทหารไทย',
+      BAY: 'กรุงศรี',
+    };
+    if (upper === 'KBANK' || upper === 'K-BANK') out.bank_name_th = 'กสิกร';
+    else if (!out.bank_name_th) out.bank_name_th = map[upper] || raw;
+    else if (map[upper]) out.bank_name_th = map[upper];
+    return out;
+  }
+
   async function handleConfirmOrder(data, profiles) {
     const orderId = data && data.orderId != null ? String(data.orderId) : '';
     const amount = data && data.amount != null ? String(data.amount) : '';
@@ -107,7 +126,9 @@ function showResultBanner(ok, detail) {
 
     const workflow = profile.close_job_workflow;
     if (Array.isArray(workflow) && workflow.length > 0) {
-      const slip = data && data.slip && typeof data.slip === 'object' ? data.slip : {};
+      const slip = enrichSlip(
+        data && data.slip && typeof data.slip === 'object' ? { ...data.slip } : {}
+      );
       if (!slip.amount && amount) slip.amount = amount;
       if (!slip.ref_number && refNumber) slip.ref_number = refNumber;
       const result = await E.runWorkflow(
