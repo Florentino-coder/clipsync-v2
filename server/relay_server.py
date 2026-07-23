@@ -83,7 +83,8 @@ def touch(ws: Ws) -> None:
 
 async def notify_phone_count(pid: str) -> None:
     pc = pcs.get(pid)
-    if pc:
+    # aiohttp 3.9 WebSocketResponse is falsy via __len__; use identity checks.
+    if pc is not None:
         await send(pc, {"type": "phone_count", "count": len(phones.get(pid, set()))})
 
 
@@ -153,7 +154,7 @@ async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
                     continue
 
                 old = pcs.get(pid)
-                if old and old is not ws:
+                if old is not None and old is not ws:
                     await send(old, {"type": "kicked"})
                     with contextlib.suppress(Exception):
                         await old.close()
@@ -224,7 +225,7 @@ async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
                     continue
 
                 pc = pcs.get(sub_id)
-                if not pc:
+                if pc is None:
                     continue
 
                 await send(
