@@ -5,12 +5,10 @@
   ],
   "order_page_url_hint": "/withdraw/transaction",
   "row_selector_hints": [
-    "tr",
-    "[class*='order']",
-    "[class*='row']",
-    "[class*='el-table']",
-    "li",
-    "[class*='card']"
+    "tr.el-table__row",
+    ".el-table__body tr",
+    "tbody tr",
+    "tr"
   ],
   "confirm_keywords": [
     "ยืนยัน",

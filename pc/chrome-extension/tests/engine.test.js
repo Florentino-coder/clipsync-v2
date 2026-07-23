@@ -122,6 +122,24 @@ describe('deepFindByText + findRow + findConfirmButton', () => {
     assert.match(byOther.row.textContent, /1,517/);
   });
 
+  it('dedupes nested row wrappers for the same amount', () => {
+    const dom = new JSDOM(`<!doctype html><body>
+      <div class="el-table">
+        <table>
+          <tr class="el-table__row"><td><div class="cell">1,828.00</div></td></tr>
+        </table>
+      </div>
+    </body>`);
+    global.document = dom.window.document;
+    const profile = {
+      ...PROFILE,
+      row_selector_hints: ['tr.el-table__row', '[class*="el-table"]', 'tr'],
+    };
+    const result = findRow(profile, '1828.00');
+    assert.equal(result.status, 'ok');
+    assert.equal(result.row.className, 'el-table__row');
+  });
+
   it('finds a row when ref has spaces or dashes', () => {
     const spaced = findRow(PROFILE, 'ORD-1001');
     assert.equal(spaced.status, 'ok');

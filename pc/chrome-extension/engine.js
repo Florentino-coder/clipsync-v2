@@ -57,40 +57,52 @@
     return (profile.row_selector_hints || []).join(',');
   }
 
-  function findRow(profile, refNumber, doc) {
-    const document = getDocument(doc);
-    if (!document || !document.body) return { status: 'row_not_found' };
+  function dedupeNestedRows(rows) {
+    // Prefer innermost match (el-table often nests tr / row wrappers).
+    return rows.filter(
+      (row) => !rows.some((other) => other !== row && row.contains && row.contains(other))
+    );
+  }
 
-    const needles = matchNeedles(refNumber);
-    if (needles.length === 0) return { status: 'row_not_found' };
-
-    const selector = rowSelector(profile);
+  function collectRowsForNeedle(document, selector, needle) {
     const rowsFromLeaves = [];
-    for (const needle of needles) {
-      const hits = deepFindByText(document.body, needle, document);
-      for (const el of hits) {
-        const row = selector ? el.closest(selector) : el.parentElement;
-        if (row) rowsFromLeaves.push(row);
-      }
+    const hits = deepFindByText(document.body, needle, document);
+    for (const el of hits) {
+      const row = selector ? el.closest(selector) : el.parentElement;
+      if (row) rowsFromLeaves.push(row);
     }
     let rows = [...new Set(rowsFromLeaves)];
-
-    // Fallback: amount/ref may be split across child nodes — match whole row text.
     if (rows.length === 0 && selector) {
       try {
-        const candidates = [...document.querySelectorAll(selector)];
-        rows = candidates.filter((row) => {
-          const text = normalize(row.textContent || '');
-          return needles.some((needle) => text.includes(needle));
-        });
+        rows = [...document.querySelectorAll(selector)].filter((row) =>
+          normalize(row.textContent || '').includes(needle)
+        );
       } catch (_) {
         rows = [];
       }
     }
+    return dedupeNestedRows(rows);
+  }
 
-    if (rows.length === 0) return { status: 'row_not_found' };
-    if (rows.length > 1) return { status: 'ambiguous' };
-    return { status: 'ok', row: rows[0] };
+  function findRow(profile, refNumber, doc) {
+    const document = getDocument(doc);
+    if (!document || !document.body) return { status: 'row_not_found' };
+
+    const needles = matchNeedles(refNumber).slice().sort((a, b) => b.length - a.length);
+    if (needles.length === 0) return { status: 'row_not_found' };
+
+    const selector = rowSelector(profile);
+    let ambiguousRows = null;
+
+    // Try most specific needle first (1828.00 before 1828).
+    for (const needle of needles) {
+      const rows = collectRowsForNeedle(document, selector, needle);
+      if (rows.length === 1) return { status: 'ok', row: rows[0] };
+      if (rows.length > 1) ambiguousRows = rows;
+    }
+
+    if (ambiguousRows) return { status: 'ambiguous' };
+    return { status: 'row_not_found' };
   }
 
   function findConfirmButton(profile, row) {
