@@ -237,12 +237,9 @@ function bootstrap() {
     const patch = {};
     const merged = mergeBundledProfiles(data.siteProfiles);
     const prev = Array.isArray(data.siteProfiles) ? data.siteProfiles : null;
-    const changed =
-      !prev ||
-      prev.length !== merged.length ||
-      JSON.stringify(prev.map((p) => p && p.profile_id)) !==
-        JSON.stringify(merged.map((p) => p && p.profile_id));
-    if (changed) patch[STORAGE_KEYS.siteProfiles] = merged;
+    if (JSON.stringify(prev) !== JSON.stringify(merged)) {
+      patch[STORAGE_KEYS.siteProfiles] = merged;
+    }
     if (!data.connectionStatus) patch[STORAGE_KEYS.connectionStatus] = 'disconnected';
     if (Object.keys(patch).length) chrome.storage.local.set(patch);
   });
