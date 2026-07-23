@@ -220,14 +220,19 @@ function mergeBundledProfiles(existing) {
     : [];
   if (!bundled.length) return Array.isArray(existing) ? existing : [];
   const list = Array.isArray(existing) ? existing.slice() : [];
-  const byId = new Map(list.map((p) => [p && p.profile_id, p]));
   for (const profile of bundled) {
     if (!profile || !profile.profile_id) continue;
-    // Bundled copy wins so selector/workflow fixes ship on Reload.
     const idx = list.findIndex((p) => p && p.profile_id === profile.profile_id);
-    if (idx >= 0) list[idx] = profile;
-    else list.push(profile);
-    byId.set(profile.profile_id, profile);
+    if (idx >= 0) {
+      const prev = list[idx] || {};
+      // Ship selector/workflow fixes, but keep the admin's dry_run toggle.
+      list[idx] = {
+        ...profile,
+        dry_run: typeof prev.dry_run === 'boolean' ? prev.dry_run : profile.dry_run,
+      };
+    } else {
+      list.push(profile);
+    }
   }
   return list;
 }

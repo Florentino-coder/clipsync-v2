@@ -200,6 +200,37 @@
     btn.setAttribute('data-clipsync-dry-run', '1');
   }
 
+  /** Prefer a real clickable ancestor — eye icons are often <svg>/<i> inside <a>/<button>. */
+  function clickableTarget(el) {
+    if (!el || !el.closest) return el;
+    return (
+      el.closest(
+        "button, a, a[role='button'], [role='button'], [onclick], input[type='button'], input[type='submit'], .el-button"
+      ) || el
+    );
+  }
+
+  function dispatchClick(el) {
+    const target = clickableTarget(el);
+    if (!target) return false;
+    try {
+      const view = target.ownerDocument && target.ownerDocument.defaultView;
+      if (view && view.MouseEvent) {
+        target.dispatchEvent(
+          new view.MouseEvent('click', { bubbles: true, cancelable: true, view, buttons: 1 })
+        );
+      }
+    } catch (_) {
+      /* fall through to .click() */
+    }
+    try {
+      target.click();
+    } catch (_) {
+      return false;
+    }
+    return true;
+  }
+
   function resolvePath(obj, path) {
     if (!path || !obj) return undefined;
     return String(path)
@@ -496,7 +527,7 @@
         const target = findStepTarget(step, context, document);
         // dry_run + outline_only: outline first clickable target and stop (no real clicks).
         if (dryRun && (outlineOnly || isSubmitStep(step))) {
-          if (target) outlineButton(target, document);
+          if (target) outlineButton(clickableTarget(target), document);
           return {
             ok: false,
             reason: 'dry_run',
@@ -506,8 +537,8 @@
           };
         }
         if (!target) return { ok: false, reason: 'click_target_not_found' };
-        if (dryRun && options.outline_clicks) outlineButton(target, document);
-        else target.click();
+        if (dryRun && options.outline_clicks) outlineButton(clickableTarget(target), document);
+        else if (!dispatchClick(target)) return { ok: false, reason: 'click_failed' };
         return { ok: true };
       }
       case 'wait_for': {
@@ -643,6 +674,8 @@
     checkCanary,
     scrapePendingOrders,
     outlineButton,
+    clickableTarget,
+    dispatchClick,
     resolveUrlTemplate,
     isApproveStub,
     apiListPending,

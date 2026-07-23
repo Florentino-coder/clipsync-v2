@@ -98,6 +98,13 @@ function showResultBanner(ok, detail) {
     }
 
     const dryRun = profile.dry_run !== false;
+    showResultBanner(
+      true,
+      dryRun
+        ? `ClipSync: โหมด dry_run — จะตีกรอบอย่างเดียว (${usedKey})`
+        : `ClipSync: โหมดกดจริง — กำลังคลิก… (${usedKey})`
+    );
+
     const workflow = profile.close_job_workflow;
     if (Array.isArray(workflow) && workflow.length > 0) {
       const slip = data && data.slip && typeof data.slip === 'object' ? data.slip : {};
@@ -112,11 +119,14 @@ function showResultBanner(ok, detail) {
       if (result.reason === 'dry_run') {
         showDryRunBanner(usedKey);
       } else if (!result.ok) {
-        showResultBanner(false, `ClipSync: ${result.reason || 'workflow_failed'} (จับ: ${usedKey})`);
+        showResultBanner(
+          false,
+          `ClipSync: ล้มเหลว ${result.reason || 'workflow_failed'} ขั้น ${result.failed_step ?? '-'} (จับ: ${usedKey})`
+        );
       } else {
         showResultBanner(true, `ClipSync: ยืนยันสำเร็จ (จับ: ${usedKey})`);
       }
-      return { ...result, matchKey: usedKey };
+      return { ...result, matchKey: usedKey, dry_run: dryRun };
     }
 
     const btnResult = await E.waitForConfirmButton(profile, rowResult.row);
@@ -133,7 +143,8 @@ function showResultBanner(ok, detail) {
       return { ok: false, reason: 'dry_run', wouldClick: true, matchKey: usedKey };
     }
 
-    btnResult.btn.click();
+    if (typeof E.dispatchClick === 'function') E.dispatchClick(btnResult.btn);
+    else btnResult.btn.click();
     const verify = await E.waitForPostClickVerify(profile, rowResult.row);
     if (!verify.ok) return { ok: false, reason: verify.reason || 'clicked_but_unverified', matchKey: usedKey };
     return { ok: true, verified: true, matchKey: usedKey };
