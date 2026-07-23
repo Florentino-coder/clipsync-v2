@@ -1,9 +1,10 @@
-"""Serve / hand off ClipSync APK to a phone over USB tether (no internet, no ADB)."""
+"""Serve / hand off ClipSync APK to a phone over PC Mobile Hotspot (no ADB)."""
 
 from __future__ import annotations
 
 import logging
 import socket
+import subprocess
 import threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -11,12 +12,14 @@ from pathlib import Path
 import psutil
 
 from clipsync.ext_installer import app_base_dir
-from clipsync.transport.usb import TETHER_NIC_HINTS
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_APK_PORT = 8788
+# Windows Mobile Hotspot host is always this gateway on the 192.168.137.0/24 LAN.
+WINDOWS_HOTSPOT_HOST_IP = "192.168.137.1"
 APK_FILENAMES = (
+    "ClipSync-slip.apk",
     "ClipSync-slip-debug.apk",
     "ClipSync.apk",
     "app-debug.apk",
@@ -25,20 +28,26 @@ APK_FILENAMES = (
 
 
 def find_bundled_apk(base: Path | None = None) -> Path | None:
-    """Locate APK next to the PC app, under pc/apk, AppData, or artifacts."""
+    """Locate APK next to the PC app, under pc/apk, AppData, or artifacts.
+
+    When ``base`` is provided (tests), only search under that tree — do not
+    fall through to the user's AppData / Downloads.
+    """
     roots: list[Path] = []
-    app = Path(base) if base is not None else app_base_dir()
+    scoped = base is not None
+    app = Path(base) if scoped else app_base_dir()
     roots.append(app)
     roots.append(app / "apk")
-    # source checkout: pc/ -> repo artifacts/
-    roots.append(app.parent / "artifacts")
-    roots.append(app / "artifacts")
-    try:
-        from clipsync.config import user_data_dir
+    if not scoped:
+        roots.append(app.parent / "artifacts")
+        roots.append(app / "artifacts")
+        try:
+            from clipsync.config import user_data_dir
 
-        roots.append(user_data_dir() / "apk")
-    except Exception:
-        pass
+            roots.append(user_data_dir() / "apk")
+        except Exception:
+            pass
+        roots.append(Path.home() / "Downloads")
 
     seen: set[Path] = set()
     for root in roots:
@@ -57,37 +66,48 @@ def find_bundled_apk(base: Path | None = None) -> Path | None:
             candidate = root / name
             if candidate.is_file():
                 return candidate
-        # any apk in folder
         matches = sorted(root.glob("*.apk"), key=lambda p: p.stat().st_mtime, reverse=True)
         if matches:
             return matches[0]
     return None
 
 
-def find_usb_tether_pc_ip() -> str | None:
-    """PC IPv4 on an up USB-tether NIC (for phone to download from)."""
+def find_hotspot_pc_ip() -> str | None:
+    """Return Windows Mobile Hotspot host IPv4 when the hotspot NIC is up."""
     stats = psutil.net_if_stats()
     for name, addrs in psutil.net_if_addrs().items():
         st = stats.get(name)
         if not st or not st.isup:
             continue
-        name_l = name.lower()
         for addr in addrs:
             if addr.family != socket.AF_INET:
                 continue
-            ip = addr.address
-            if ip.startswith("169.254") or ip.startswith("127."):
-                continue
-            tetherish = any(h in name_l for h in TETHER_NIC_HINTS) or ip.startswith(
-                "192.168.42."
-            )
-            if tetherish:
-                return ip
+            if addr.address == WINDOWS_HOTSPOT_HOST_IP:
+                return WINDOWS_HOTSPOT_HOST_IP
     return None
 
 
 def apk_download_url(pc_ip: str, filename: str, *, port: int = DEFAULT_APK_PORT) -> str:
     return f"http://{pc_ip}:{port}/{filename}"
+
+
+def make_apk_qr_png(url: str, dest: Path) -> Path:
+    """Write a scannable QR PNG for the APK HTTP URL."""
+    import qrcode
+
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    img = qrcode.make(url)
+    img.save(dest)
+    return dest
+
+
+def open_mobile_hotspot_settings() -> None:
+    """Open Windows Settings → Mobile hotspot (ms-settings URI)."""
+    subprocess.Popen(
+        ["cmd", "/c", "start", "", "ms-settings:network-mobilehotspot"],
+        shell=False,
+    )
 
 
 class _ApkHandler(SimpleHTTPRequestHandler):
@@ -96,20 +116,28 @@ class _ApkHandler(SimpleHTTPRequestHandler):
 
 
 class ApkHttpServer:
-    """Tiny HTTP server that only serves one APK file at / and /filename."""
+    """HTTP server bound to all interfaces; URL advertises the phone-facing IP."""
 
-    def __init__(self, apk_path: Path, *, host: str, port: int = DEFAULT_APK_PORT) -> None:
+    def __init__(
+        self,
+        apk_path: Path,
+        *,
+        advertise_host: str,
+        port: int = DEFAULT_APK_PORT,
+        bind_host: str = "0.0.0.0",
+    ) -> None:
         self.apk_path = Path(apk_path).resolve()
         if not self.apk_path.is_file():
             raise FileNotFoundError(str(self.apk_path))
-        self.host = host
+        self.advertise_host = advertise_host
+        self.bind_host = bind_host
         self.port = port
         self._httpd: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
 
     @property
     def url(self) -> str:
-        return apk_download_url(self.host, self.apk_path.name, port=self.port)
+        return apk_download_url(self.advertise_host, self.apk_path.name, port=self.port)
 
     def start(self) -> str:
         if self._httpd is not None:
@@ -129,7 +157,7 @@ class ApkHttpServer:
                     return SimpleHTTPRequestHandler.do_GET(self)
                 self.send_error(404, "Not found")
 
-        httpd = ThreadingHTTPServer((self.host, self.port), Handler)
+        httpd = ThreadingHTTPServer((self.bind_host, self.port), Handler)
         self._httpd = httpd
         self._thread = threading.Thread(target=httpd.serve_forever, name="apk-http", daemon=True)
         self._thread.start()
@@ -155,31 +183,44 @@ def start_apk_share(
     port: int = DEFAULT_APK_PORT,
 ) -> dict[str, str]:
     """
-    Start serving APK on the USB-tether PC IP.
+    Start serving APK for phones on the PC Mobile Hotspot LAN.
 
-    Returns dict with keys: url, apk_path, pc_ip
+    Binds 0.0.0.0; advertises http://192.168.137.1:port/…
+    Returns dict with keys: url, apk_path, pc_ip, qr_path
     """
     global _active_server
     path = Path(apk_path) if apk_path else find_bundled_apk()
     if path is None:
         raise FileNotFoundError(
-            "ไม่พบไฟล์ APK — วาง ClipSync-slip-debug.apk ที่ pc/apk/ หรือ artifacts/"
+            "ไม่พบไฟล์ APK — กดดาวน์โหลดจาก GitHub ก่อน หรือวางไฟล์ที่ Downloads / pc/apk/"
         )
-    pc_ip = find_usb_tether_pc_ip()
+    pc_ip = find_hotspot_pc_ip()
     if not pc_ip:
         raise RuntimeError(
-            "ยังไม่เจอ USB tethering NIC — เปิด USB tethering บนมือถือก่อน "
-            "(ไม่ต้องใช้เน็ตมือถือ ก็ได้)"
+            "ยังไม่เจอ Mobile Hotspot ของ PC\n"
+            "1) เปิด Settings → Mobile hotspot\n"
+            "2) เปิดสวิตช์ Mobile hotspot\n"
+            "3) ให้มือถือต่อ Wi‑Fi ชื่อเครื่อง PC\n"
+            "แล้วกดแชร์อีกครั้ง"
         )
 
     if _active_server is not None:
         _active_server.stop()
         _active_server = None
 
-    server = ApkHttpServer(path, host=pc_ip, port=port)
+    server = ApkHttpServer(path, advertise_host=pc_ip, port=port, bind_host="0.0.0.0")
     url = server.start()
     _active_server = server
-    return {"url": url, "apk_path": str(path), "pc_ip": pc_ip}
+
+    from clipsync.config import user_data_dir
+
+    qr_path = make_apk_qr_png(url, user_data_dir() / "apk" / "share-qr.png")
+    return {
+        "url": url,
+        "apk_path": str(path),
+        "pc_ip": pc_ip,
+        "qr_path": str(qr_path),
+    }
 
 
 def stop_apk_share() -> None:
@@ -197,7 +238,7 @@ def download_apk_from_url(
 ) -> Path:
     """Download APK from GitHub (or any URL) into AppData apk folder.
 
-    Phone should NOT download from GitHub directly — PC pulls first, then USB share.
+    Phone should NOT download from GitHub directly — PC pulls first, then hotspot share.
     """
     import urllib.request
 
@@ -211,9 +252,12 @@ def download_apk_from_url(
 
     out_dir = Path(dest_dir) if dest_dir else (user_data_dir() / "apk")
     out_dir.mkdir(parents=True, exist_ok=True)
-    name = url.rstrip("/").split("/")[-1] or "ClipSync-slip.apk"
+    name = url.rstrip("/").split("/")[-1] or "ClipSync.apk"
     if not name.lower().endswith(".apk"):
-        name = "ClipSync-slip.apk"
+        name = "ClipSync.apk"
+    # Normalize slip release name so Share finds ClipSync.apk too.
+    if name.lower() == "clipsync-slip.apk":
+        name = "ClipSync.apk"
     dest = out_dir / name
 
     req = urllib.request.Request(url, headers={"User-Agent": "ClipSyncPC/0.9"})
@@ -222,11 +266,15 @@ def download_apk_from_url(
     if len(data) < 1000:
         raise RuntimeError(f"Download too small ({len(data)} bytes) — check release URL")
     dest.write_bytes(data)
+    # Also keep ClipSync-slip.apk alias if release used that name in URL.
+    slip_alias = out_dir / "ClipSync-slip.apk"
+    if dest.name == "ClipSync.apk" and "ClipSync-slip.apk" in url:
+        slip_alias.write_bytes(data)
     return dest
 
 
 def start_apk_share_from_config() -> dict[str, str]:
-    """Download if missing optional; always prefer local AppData apk then share over USB."""
+    """Download if missing; prefer AppData apk then share over hotspot."""
     from clipsync.config import load_config
 
     cfg = load_config()
@@ -236,21 +284,18 @@ def start_apk_share_from_config() -> dict[str, str]:
     if local is None:
         local = download_apk_from_url(str(apk_cfg.get("download_url") or ""))
     else:
-        # Keep a stable copy in AppData
         local = copy_apk_to_appdata(local)
     return start_apk_share(local, port=port)
 
 
 def open_apk_folder(apk_path: Path | None = None) -> Path:
-    """Open Explorer on the APK so user can drag-drop via MTP file transfer."""
+    """Open Explorer on the APK folder."""
     path = Path(apk_path) if apk_path else find_bundled_apk()
     if path is None:
         raise FileNotFoundError("ไม่พบไฟล์ APK")
-    folder = path.parent
-    # Explorer select file
-    import subprocess
+    import subprocess as sp
 
-    subprocess.Popen(["explorer", "/select,", str(path.resolve())])
+    sp.Popen(["explorer", "/select,", str(path.resolve())])
     return path
 
 

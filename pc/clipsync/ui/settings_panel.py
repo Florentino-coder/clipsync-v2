@@ -200,9 +200,11 @@ class SettingsPanel:
             row=row, column=0, columnspan=3, sticky="ew", pady=(12, 8)
         )
         row += 1
-        ttk.Label(form, text="ติดตั้ง APK มือถือ (USB / ไม่ต้องเน็ต)", font=("Segoe UI", 10, "bold")).grid(
-            row=row, column=0, columnspan=3, sticky="w"
-        )
+        ttk.Label(
+            form,
+            text="ติดตั้ง APK มือถือ (PC Hotspot + QR / ไม่ต้อง ADB)",
+            font=("Segoe UI", 10, "bold"),
+        ).grid(row=row, column=0, columnspan=3, sticky="w")
         row += 1
         self._apk_status = tk.StringVar(value="")
         ttk.Label(form, textvariable=self._apk_status, foreground="#667085", wraplength=520).grid(
@@ -214,10 +216,10 @@ class SettingsPanel:
         ttk.Button(apk_btns, text="ดาวน์โหลด APK จาก GitHub", command=self.download_apk).pack(
             side="left"
         )
-        ttk.Button(apk_btns, text="แชร์ APK ผ่าน USB tether", command=self.share_apk_over_usb).pack(
+        ttk.Button(apk_btns, text="เปิดหน้า Hotspot", command=self.open_hotspot_settings).pack(
             side="left", padx=(8, 0)
         )
-        ttk.Button(apk_btns, text="เปิดโฟลเดอร์ APK", command=self.open_apk_folder).pack(
+        ttk.Button(apk_btns, text="แชร์ APK + QR", command=self.share_apk_over_hotspot).pack(
             side="left", padx=(8, 0)
         )
         ttk.Button(apk_btns, text="Copy URL", command=self.copy_apk_url).pack(
@@ -226,7 +228,11 @@ class SettingsPanel:
         ttk.Button(apk_btns, text="หยุดแชร์", command=self.stop_apk_share).pack(
             side="left", padx=(8, 0)
         )
+        row += 1
+        self._apk_qr_label = ttk.Label(form)
+        self._apk_qr_label.grid(row=row, column=0, columnspan=3, sticky="w", pady=(6, 0))
         self._apk_url: str = ""
+        self._apk_qr_photo = None  # keep PhotoImage ref alive
 
         actions = ttk.Frame(self.frame)
         actions.pack(fill="x", pady=(16, 0))
@@ -304,22 +310,58 @@ class SettingsPanel:
         self._status_var.set("Copied pairing token — paste into extension popup")
 
     def refresh_apk_status(self) -> None:
-        from clipsync.apk_installer import find_bundled_apk, find_usb_tether_pc_ip
+        from clipsync.apk_installer import find_bundled_apk, find_hotspot_pc_ip
 
         apk = find_bundled_apk()
-        tether = find_usb_tether_pc_ip()
+        hotspot = find_hotspot_pc_ip()
         parts = []
         if apk is not None:
             parts.append(f"APK: {apk.name} ({apk.parent})")
         else:
-            parts.append("APK: ยังไม่พบ — รอ build หรือวางไฟล์ที่ pc/apk/")
-        if tether:
-            parts.append(f"USB PC IP: {tether}")
+            parts.append("APK: ยังไม่พบ — กดดาวน์โหลดจาก GitHub หรือวางใน Downloads")
+        if hotspot:
+            parts.append(f"Hotspot PC IP: {hotspot}")
         else:
-            parts.append("USB tether: ยังไม่เจอ — เปิด USB tethering บนมือถือ")
+            parts.append("Hotspot: ยังไม่เจอ — กด「เปิดหน้า Hotspot」แล้วเปิดสวิตช์")
         if self._apk_url:
             parts.append(f"กำลังแชร์: {self._apk_url}")
         self._apk_status.set(" | ".join(parts))
+
+    def _show_apk_qr(self, qr_path: str) -> None:
+        try:
+            from PIL import Image, ImageTk
+        except Exception:
+            self._apk_qr_label.configure(text=f"QR: {qr_path}")
+            return
+        try:
+            img = Image.open(qr_path).resize((180, 180))
+            photo = ImageTk.PhotoImage(img)
+            self._apk_qr_photo = photo
+            self._apk_qr_label.configure(image=photo, text="")
+        except Exception as exc:
+            self._apk_qr_label.configure(image="", text=f"QR error: {exc}")
+
+    def open_hotspot_settings(self) -> None:
+        from clipsync.apk_installer import open_mobile_hotspot_settings
+
+        try:
+            open_mobile_hotspot_settings()
+        except Exception as exc:
+            if messagebox is not None:
+                messagebox.showerror("Hotspot", str(exc))
+            return
+        self._status_var.set("เปิดหน้า Mobile hotspot แล้ว — เปิดสวิตช์ แล้วให้มือถือต่อ Wi‑Fi ของ PC")
+        if messagebox is not None:
+            messagebox.showinfo(
+                "ขั้นตอนเปิด Hotspot",
+                "1) ในหน้าต่าง Settings ที่เด้งขึ้น → เปิดสวิตช์ Mobile hotspot\n"
+                "2) จดชื่อ Wi‑Fi + รหัส (หรือสแกน QR ของ Windows)\n"
+                "3) บนมือถือ: ต่อ Wi‑Fi นั้น (ปิดเน็ตมือถือได้)\n"
+                "4) กลับมาที่ ClipSync → กด「แชร์ APK + QR」\n"
+                "5) สแกน QR ใน Settings หรือเปิด URL ที่คัดลอกไว้\n\n"
+                "หมายเหตุ: อย่าเปิด IP ของมือถือ — ต้องเป็นของ PC (มักเป็น 192.168.137.1)",
+            )
+        self.refresh_apk_status()
 
     def download_apk(self) -> None:
         from clipsync.apk_installer import download_apk_from_url
@@ -346,10 +388,11 @@ class SettingsPanel:
         if messagebox is not None:
             messagebox.showinfo(
                 "ดาวน์โหลด APK",
-                f"บันทึกแล้ว:\n{path}\n\nขั้นถัดไป: เปิด USB tethering แล้วกด「แชร์ APK ผ่าน USB tether」",
+                f"บันทึกแล้ว:\n{path}\n\nขั้นถัดไป: กด「เปิดหน้า Hotspot」→ เปิดสวิตช์ → "
+                "มือถือต่อ Wi‑Fi ของ PC → กด「แชร์ APK + QR」",
             )
 
-    def share_apk_over_usb(self) -> None:
+    def share_apk_over_hotspot(self) -> None:
         from clipsync.apk_installer import copy_apk_to_appdata, start_apk_share
         from clipsync.config import load_config
 
@@ -370,33 +413,36 @@ class SettingsPanel:
         except Exception as exc:
             self._status_var.set(f"แชร์ APK ไม่ได้: {exc}")
             if messagebox is not None:
-                messagebox.showerror("ติดตั้ง APK", str(exc))
+                messagebox.showerror(
+                    "ติดตั้ง APK",
+                    f"{exc}\n\nถ้ายังไม่เปิด Hotspot: กด「เปิดหน้า Hotspot」ก่อน",
+                )
             self.refresh_apk_status()
             return
 
         self._apk_url = info["url"]
+        self._show_apk_qr(info["qr_path"])
         try:
             copy_text_to_clipboard(self._apk_url, root=self.frame.winfo_toplevel())
         except Exception:
             pass
         self.refresh_apk_status()
-        self._status_var.set(f"แชร์ APK แล้ว — URL อยู่ในคลิปบอร์ด: {self._apk_url}")
+        self._status_var.set(f"แชร์ APK แล้ว — สแกน QR หรือเปิด: {self._apk_url}")
         if messagebox is not None:
             messagebox.showinfo(
-                "ติดตั้ง APK ผ่าน USB",
-                "1) มือถือเปิด USB tethering แล้ว\n"
-                "2) เปิด Chrome/Browser บนมือถือ\n"
-                f"3) เปิดลิงก์นี้ (คัดลอกไว้แล้ว):\n{self._apk_url}\n"
-                "4) ดาวน์โหลด → ติดตั้ง (อนุญาตติดตั้งจากไฟล์)\n\n"
-                "ไม่ใช้เน็ตมือถือ — วิ่งในสาย USB อย่างเดียว\n"
-                "แอปทดสอบ package คนละตัวกับ production ได้ถ้า build จาก v2",
+                "ติดตั้ง APK ผ่าน Hotspot",
+                "มือถือต้องต่อ Wi‑Fi Hotspot ของ PC อยู่แล้ว\n\n"
+                "1) สแกน QR ในหน้า Settings (หรือเปิด URL ที่คัดลอกไว้)\n"
+                f"2) URL ที่ถูก:\n{self._apk_url}\n"
+                "3) ดาวน์โหลด → ติดตั้ง (อนุญาตติดตั้งจากไฟล์)\n\n"
+                "อย่าใช้ IP ของมือถือ (.252 ฯลฯ) — ต้องเป็นของ PC (.1)",
             )
 
     def copy_apk_url(self) -> None:
         if not self._apk_url:
             self.refresh_apk_status()
             if messagebox is not None:
-                messagebox.showwarning("ติดตั้ง APK", "ยังไม่ได้แชร์ — กด「แชร์ APK ผ่าน USB tether」ก่อน")
+                messagebox.showwarning("ติดตั้ง APK", "ยังไม่ได้แชร์ — กด「แชร์ APK + QR」ก่อน")
             return
         try:
             copy_text_to_clipboard(self._apk_url, root=self.frame.winfo_toplevel())
@@ -404,23 +450,13 @@ class SettingsPanel:
         except Exception as exc:
             self._status_var.set(f"Copy failed: {exc}")
 
-    def open_apk_folder(self) -> None:
-        from clipsync.apk_installer import open_apk_folder
-
-        try:
-            path = open_apk_folder()
-            self._status_var.set(f"Opened folder for {path.name} — ลากไปมือถือได้ถ้าโหมด File transfer")
-            self.refresh_apk_status()
-        except Exception as exc:
-            if messagebox is not None:
-                messagebox.showerror("ติดตั้ง APK", str(exc))
-            self._status_var.set(str(exc))
-
     def stop_apk_share(self) -> None:
         from clipsync.apk_installer import stop_apk_share
 
         stop_apk_share()
         self._apk_url = ""
+        self._apk_qr_photo = None
+        self._apk_qr_label.configure(image="", text="")
         self.refresh_apk_status()
         self._status_var.set("หยุดแชร์ APK แล้ว")
 

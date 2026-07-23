@@ -14,11 +14,20 @@ void main() {
   runApp(const App());
 }
 
+/// Test APK builds (clipsync-v2 / applicationId `.test`) skip the license wall.
+const bool kClipSyncTestBuild = bool.fromEnvironment(
+  'CLIPSYNC_TEST_BUILD',
+  defaultValue: false,
+);
+
 class App extends StatelessWidget {
   const App({super.key});
 
   @override
   Widget build(BuildContext context) {
+    final home = kClipSyncTestBuild
+        ? const HomeScreen()
+        : const LicenseGate(child: HomeScreen());
     return WithForegroundTask(
       child: MaterialApp(
         title: 'ClipSync',
@@ -33,7 +42,7 @@ class App extends StatelessWidget {
           useMaterial3: true,
           brightness: Brightness.dark,
         ),
-        home: const LicenseGate(child: HomeScreen()),
+        home: home,
       ),
     );
   }

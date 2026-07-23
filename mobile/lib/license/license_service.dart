@@ -229,7 +229,16 @@ String licenseBadge({required bool allowed, int? daysLeft}) {
 
 String licenseBadgeLabel(VerifyResult result) {
   if (!result.valid) {
-    return 'หมดอายุ — ล็อก';
+    if (result.reason == 'missing_token') {
+      return 'ยังไม่มี license';
+    }
+    if (result.reason == 'device_mismatch') {
+      return 'เครื่องไม่ตรงกับ token';
+    }
+    if (result.reason == 'expired') {
+      return 'หมดอายุ — ล็อก';
+    }
+    return 'ล็อก — ใส่ token';
   }
   final days = result.daysLeft ?? 0;
   if (days <= kYellowDaysThreshold) {

@@ -1,4 +1,4 @@
-"""Tests for APK USB share helpers (no real HTTP bind required for most)."""
+"""Tests for APK hotspot share helpers."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from unittest.mock import patch
 from clipsync.apk_installer import (
     apk_download_url,
     find_bundled_apk,
-    find_usb_tether_pc_ip,
+    find_hotspot_pc_ip,
 )
 
 
@@ -25,14 +25,14 @@ def test_find_bundled_apk_missing(tmp_path: Path):
 
 
 def test_apk_download_url():
-    assert apk_download_url("192.168.42.129", "ClipSync.apk") == (
-        "http://192.168.42.129:8788/ClipSync.apk"
+    assert apk_download_url("192.168.137.1", "ClipSync.apk") == (
+        "http://192.168.137.1:8788/ClipSync.apk"
     )
 
 
 def test_download_apk_from_url(tmp_path: Path, monkeypatch):
     dest_dir = tmp_path / "apk"
-    payload = b"PK" + (b"0" * 2000)  # pretend zip/apk
+    payload = b"PK" + (b"0" * 2000)
 
     class Resp:
         def read(self):
@@ -57,12 +57,12 @@ def test_download_apk_from_url(tmp_path: Path, monkeypatch):
         "https://github.com/Florentino-coder/clipsync-v2/releases/download/slip-test-latest/ClipSync-slip.apk",
         dest_dir=dest_dir,
     )
-    assert out == dest_dir / "ClipSync-slip.apk"
+    assert out == dest_dir / "ClipSync.apk"
     assert out.read_bytes() == payload
     assert out.stat().st_size >= 1000
 
 
-def test_find_usb_tether_pc_ip_uses_ndis():
+def test_find_hotspot_pc_ip_uses_windows_gateway():
     class Addr:
         def __init__(self, family, address, netmask="255.255.255.0"):
             self.family = family
@@ -76,13 +76,13 @@ def test_find_usb_tether_pc_ip_uses_ndis():
 
     def fake_addrs():
         return {
-            "Remote NDIS": [Addr(socket.AF_INET, "192.168.42.129")],
+            "Wi-Fi 5": [Addr(socket.AF_INET, "192.168.137.1")],
             "Wi-Fi": [Addr(socket.AF_INET, "30.31.3.202")],
         }
 
     def fake_stats():
-        return {"Remote NDIS": Stat(), "Wi-Fi": Stat()}
+        return {"Wi-Fi 5": Stat(), "Wi-Fi": Stat()}
 
     with patch("clipsync.apk_installer.psutil.net_if_addrs", fake_addrs):
         with patch("clipsync.apk_installer.psutil.net_if_stats", fake_stats):
-            assert find_usb_tether_pc_ip() == "192.168.42.129"
+            assert find_hotspot_pc_ip() == "192.168.137.1"

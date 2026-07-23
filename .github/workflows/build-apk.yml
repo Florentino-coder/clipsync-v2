@@ -210,7 +210,7 @@ jobs:
 
       - name: Build release APK
         working-directory: mobile_build
-        run: flutter build apk --release
+        run: flutter build apk --release --dart-define=CLIPSYNC_TEST_BUILD=true
 
       - name: Rename APK
         run: |
