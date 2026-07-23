@@ -31,29 +31,28 @@
     }
   }
 
-  function showDryRunBanner(detail) {
-    const id = 'clipsync-dry-run-banner';
+function showResultBanner(ok, detail) {
+    const id = 'clipsync-result-banner';
     let banner = document.getElementById(id);
     if (!banner) {
       banner = document.createElement('div');
       banner.id = id;
       banner.style.cssText =
-        'position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#e53935;color:#fff;padding:10px 14px;font:14px sans-serif;text-align:center;';
+        'position:fixed;top:0;left:0;right:0;z-index:2147483647;color:#fff;padding:10px 14px;font:14px/1.4 sans-serif;text-align:center;';
       document.documentElement.appendChild(banner);
     }
-    banner.textContent = `ClipSync dry-run: กรอบแดงที่เป้าหมายแล้ว (${detail || 'ok'}) — ยังไม่กดจริง`;
-    clearTimeout(showDryRunBanner._t);
-    showDryRunBanner._t = setTimeout(() => banner.remove(), 8000);
+    banner.style.background = ok ? '#2e7d32' : '#e53935';
+    banner.textContent = detail || (ok ? 'ClipSync: ok' : 'ClipSync: failed');
+    clearTimeout(showResultBanner._t);
+    showResultBanner._t = setTimeout(() => banner.remove(), 12000);
+  }
+
+  function showDryRunBanner(detail) {
+    showResultBanner(false, `ClipSync dry-run: กรอบแดงที่เป้าหมายแล้ว (${detail || 'ok'}) — ยังไม่กดจริง`);
   }
 
   function showSessionBanner() {
-    if (document.getElementById('clipsync-session-banner')) return;
-    const banner = document.createElement('div');
-    banner.id = 'clipsync-session-banner';
-    banner.textContent = 'ClipSync: admin session expired — please log in again';
-    banner.style.cssText =
-      'position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#c62828;color:#fff;padding:8px 12px;font:14px sans-serif;text-align:center;';
-    document.documentElement.appendChild(banner);
+    showResultBanner(false, 'ClipSync: admin session expired — please log in again');
   }
 
   function profileForConfirm(profiles, orderId) {
@@ -85,11 +84,17 @@
         break;
       }
       if (rowResult.status === 'ambiguous') {
+        showResultBanner(false, `ClipSync: พบหลายแถวสำหรับ ${key} — แคบการค้นหาบนหน้าหลังบ้าน`);
         return { ok: false, reason: 'ambiguous', matchKey: key };
       }
     }
     if (rowResult.status !== 'ok') {
-      return { ok: false, reason: rowResult.status, tried: matchKeys };
+      const reason = rowResult.status || 'row_not_found';
+      showResultBanner(
+        false,
+        `ClipSync: หาแถวไม่เจอ (${reason}) — ลองแล้ว: ${matchKeys.join(', ')} — ให้เปิดหน้าที่มีจำนวนตรงกับสลิป`
+      );
+      return { ok: false, reason, tried: matchKeys };
     }
 
     const dryRun = profile.dry_run !== false;
@@ -106,6 +111,10 @@
       );
       if (result.reason === 'dry_run') {
         showDryRunBanner(usedKey);
+      } else if (!result.ok) {
+        showResultBanner(false, `ClipSync: ${result.reason || 'workflow_failed'} (จับ: ${usedKey})`);
+      } else {
+        showResultBanner(true, `ClipSync: ยืนยันสำเร็จ (จับ: ${usedKey})`);
       }
       return { ...result, matchKey: usedKey };
     }

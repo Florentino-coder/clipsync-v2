@@ -860,6 +860,11 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
     def _on_slip_manual_confirm(self, event: Mapping[str, Any]) -> None:
         order_id = event.get("order_id") or event.get("orderId")
         amount = event.get("amount")
+        try:
+            if amount is not None and str(amount).strip() != "":
+                amount = f"{float(amount):.2f}"
+        except (TypeError, ValueError):
+            amount = str(amount).strip() if amount is not None else None
         ref_number = event.get("ref_number") or event.get("refNumber")
         slip_payload = {
             k: event.get(k)

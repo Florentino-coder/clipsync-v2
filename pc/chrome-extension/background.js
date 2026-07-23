@@ -90,13 +90,35 @@ function forwardToAdminTab(data) {
         reportResult(orderId, false, 'admin_tab_not_found');
         return;
       }
-      chrome.tabs.sendMessage(tabs[0].id, data, (resp) => {
-        if (chrome.runtime.lastError || !resp) {
-          reportResult(orderId, false, 'content_script_unreachable');
-          return;
-        }
-        reportResult(orderId, resp.ok, resp.reason, resp);
-      });
+      // Prefer the most recently used admin tab (user is looking at it).
+      const sorted = tabs.slice().sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0));
+      const tab = sorted[0];
+      const send = () => {
+        chrome.tabs.sendMessage(tab.id, data, (resp) => {
+          if (chrome.runtime.lastError || !resp) {
+            // Existing tab may predate extension reload — inject then retry once.
+            chrome.scripting.executeScript(
+              { target: { tabId: tab.id, allFrames: true }, files: ['engine.js', 'content-script.js'] },
+              () => {
+                if (chrome.runtime.lastError) {
+                  reportResult(orderId, false, 'content_script_unreachable');
+                  return;
+                }
+                chrome.tabs.sendMessage(tab.id, data, (resp2) => {
+                  if (chrome.runtime.lastError || !resp2) {
+                    reportResult(orderId, false, 'content_script_unreachable');
+                    return;
+                  }
+                  reportResult(orderId, resp2.ok, resp2.reason, resp2);
+                });
+              }
+            );
+            return;
+          }
+          reportResult(orderId, resp.ok, resp.reason, resp);
+        });
+      };
+      send();
     });
   });
 }

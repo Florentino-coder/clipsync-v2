@@ -192,6 +192,12 @@ class SlipBootstrap:
             self._orchestrator.on_pending_orders(data)
 
     def _on_confirm_result(self, data: dict[str, Any]) -> None:
+        reason = data.get("reason")
+        ok = data.get("ok")
+        match_key = data.get("matchKey") or data.get("tried")
+        self._app_log(
+            f"Extension confirm_result: ok={ok} reason={reason} match={match_key}"
+        )
         if self._orchestrator is not None:
             self._orchestrator.on_confirm_result(data)
 
