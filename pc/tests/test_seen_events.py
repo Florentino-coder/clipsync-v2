@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 from clipsync.seen_events import SeenEvents, default_seen_events_path
@@ -39,6 +40,7 @@ def test_mark_idempotent(tmp_path: Path):
 
 
 def test_default_path_under_appdata(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setenv("APPDATA", str(tmp_path))
 
     assert default_seen_events_path() == tmp_path / "ClipSync" / "seen_events.json"

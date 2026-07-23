@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -110,6 +111,7 @@ def test_existing_pairing_token_preserved(tmp_path: Path):
 
 def test_default_config_path_uses_appdata(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.delenv("CLIPSYNC_CONFIG", raising=False)
+    monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setenv("APPDATA", str(tmp_path))
     from clipsync import config as config_mod
 
