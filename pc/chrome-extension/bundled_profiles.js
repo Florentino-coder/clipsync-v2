@@ -154,18 +154,9 @@ const BUNDLED_SITE_PROFILES = [
         "timeout_ms": 5000
       },
       {
-        "action": "click",
-        "match_text": "ตกลง",
-        "nth_fallback": "last",
-        "selector_hints": [
-          ".el-message-box__btns button",
-          ".el-message-box button",
-          "[class*='message-box'] button",
-          "[role='dialog'] button",
-          "button.btn-primary",
-          "button.btn",
-          "button"
-        ]
+        "action": "dismiss_dialog",
+        "match_text": "ตกลง|OK",
+        "timeout_ms": 8000
       }
     ],
     "_notes": [

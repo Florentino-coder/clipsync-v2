@@ -96,6 +96,7 @@ class ChromeBridge:
         amount: Any = None,
         ref_number: Any = None,
         slip: Optional[Mapping[str, Any]] = None,
+        event_id: Any = None,
     ) -> int:
         """Push confirm_order to extension clients. Returns connected client count."""
         payload: dict[str, Any] = {
@@ -106,6 +107,8 @@ class ChromeBridge:
             payload["amount"] = str(amount).strip()
         if ref_number is not None and str(ref_number).strip():
             payload["refNumber"] = str(ref_number).strip()
+        if event_id is not None and str(event_id).strip():
+            payload["event_id"] = str(event_id).strip()
         if slip:
             payload["slip"] = dict(slip)
         if not self._clients:

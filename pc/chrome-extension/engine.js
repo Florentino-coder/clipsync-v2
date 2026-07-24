@@ -268,7 +268,8 @@
   function dispatchClick(el) {
     const target = clickableTarget(el);
     if (!target) return false;
-    // Prefer a single native click — dispatching MouseEvent AND .click() toggles twice.
+    // Prefer a single native click — dispatching MouseEvent AND .click() toggles twice
+    // (breaks custom dropdowns). MessageBox dismiss uses forceClick separately.
     try {
       target.click();
       return true;
@@ -287,6 +288,159 @@
       return false;
     }
     return false;
+  }
+
+  /** Stronger click for stubborn Element UI / Vue MessageBox buttons. */
+  function forceClick(el) {
+    const target = clickableTarget(el);
+    if (!target) return false;
+    try {
+      const view = target.ownerDocument && target.ownerDocument.defaultView;
+      if (view && view.MouseEvent) {
+        const rect = target.getBoundingClientRect ? target.getBoundingClientRect() : null;
+        const cx = rect ? rect.left + rect.width / 2 : 0;
+        const cy = rect ? rect.top + rect.height / 2 : 0;
+        const base = {
+          bubbles: true,
+          cancelable: true,
+          view,
+          buttons: 1,
+          clientX: cx,
+          clientY: cy,
+        };
+        target.dispatchEvent(new view.MouseEvent('pointerdown', base));
+        target.dispatchEvent(new view.MouseEvent('mousedown', base));
+        target.dispatchEvent(new view.MouseEvent('pointerup', base));
+        target.dispatchEvent(new view.MouseEvent('mouseup', base));
+        target.dispatchEvent(new view.MouseEvent('click', base));
+      }
+    } catch (_) {
+      /* ignore */
+    }
+    try {
+      target.click();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /**
+   * Dismiss a success/confirm MessageBox (Element UI / Bootstrap modal).
+   * Verifies the dialog actually disappears — .click() alone often reports ok
+   * while the Jinbao success popup stays open.
+   */
+  async function dismissMessageBox(step, context, doc) {
+    const document = getDocument(doc);
+    if (!document || !document.body) {
+      return { ok: false, reason: 'dismiss_no_document' };
+    }
+    const boxSelectors = [
+      '.el-message-box__wrapper',
+      '.el-message-box',
+      '.el-overlay.is-message-box',
+      '[class*="message-box"]',
+      '.modal.show',
+      '.modal[style*="display: block"]',
+      '[role="dialog"]',
+      '.swal2-container',
+    ];
+    const btnNeedles = String(step.match_text || 'ตกลง|OK|Ok|ok').split('|');
+    const timeout = step.timeout_ms || 6000;
+    const start = Date.now();
+
+    const visibleBoxes = () => {
+      const out = [];
+      for (const sel of boxSelectors) {
+        let nodes = [];
+        try {
+          nodes = [...document.querySelectorAll(sel)];
+        } catch (_) {
+          nodes = [];
+        }
+        for (const n of nodes) {
+          if (isVisible(n)) out.push(n);
+        }
+      }
+      // Prefer innermost / message-box over generic dialogs.
+      return [...new Set(out)];
+    };
+
+    const findOkButton = (box) => {
+      const buttons = [
+        ...box.querySelectorAll(
+          'button.el-button--primary, .el-message-box__btns button, .modal-footer button, button.btn-primary, button.swal2-confirm, button'
+        ),
+      ];
+      const exact = buttons.filter((b) => {
+        const t = String(b.textContent || b.value || '')
+          .replace(/\s+/g, ' ')
+          .trim();
+        return btnNeedles.some((n) => t.toLowerCase() === String(n).trim().toLowerCase());
+      });
+      if (exact.length) return exact[exact.length - 1];
+      const soft = buttons.filter((b) =>
+        btnNeedles.some((n) => textMatches(b, n))
+      );
+      if (soft.length) return soft[soft.length - 1];
+      return (
+        box.querySelector('button.el-button--primary') ||
+        box.querySelector('.el-message-box__btns button') ||
+        buttons[buttons.length - 1] ||
+        null
+      );
+    };
+
+    let lastReason = 'dismiss_dialog_not_found';
+    while (Date.now() - start < timeout) {
+      const boxes = visibleBoxes();
+      if (!boxes.length) {
+        // Already gone — treat as success (e.g. auto-closed).
+        if (Date.now() - start > 400) return { ok: true, dismissed: true, already_gone: true };
+        await sleep(80);
+        continue;
+      }
+      // Prefer a box that contains success copy when present.
+      const prefer = boxes.find((b) =>
+        /สำเร็จ|บันทึก|success|confirm/i.test(b.textContent || '')
+      );
+      const box = prefer || boxes[boxes.length - 1];
+      const btn = findOkButton(box);
+      if (!btn) {
+        lastReason = 'dismiss_button_not_found';
+        await sleep(120);
+        continue;
+      }
+      dispatchClick(btn);
+      forceClick(btn);
+      // Enter key fallback (Element UI MessageBox often binds confirm to Enter).
+      try {
+        const view = document.defaultView;
+        if (view && view.KeyboardEvent) {
+          const opts = { bubbles: true, cancelable: true, key: 'Enter', code: 'Enter', keyCode: 13 };
+          box.dispatchEvent(new view.KeyboardEvent('keydown', opts));
+          (document.activeElement || box).dispatchEvent(new view.KeyboardEvent('keydown', opts));
+        }
+      } catch (_) {
+        /* ignore */
+      }
+
+      const until = Date.now() + 2500;
+      while (Date.now() < until) {
+        const still = visibleBoxes().some((b) => b === box || (box.contains && box.contains(b)));
+        const anyBox = visibleBoxes().length > 0;
+        // Success when the specific box is gone, or no message-box wrappers remain.
+        if (!still && (!anyBox || !isVisible(box))) {
+          return { ok: true, dismissed: true };
+        }
+        // Some wrappers stay in DOM with display:none — isVisible handles that.
+        if (!isVisible(box)) return { ok: true, dismissed: true };
+        await sleep(100);
+      }
+      lastReason = 'dismiss_dialog_still_open';
+      await sleep(150);
+    }
+    return { ok: false, reason: lastReason };
   }
 
   function resolvePath(obj, path) {
@@ -1670,6 +1824,17 @@
         return verifyOrFill(step, context, document);
       case 'verify_result':
         return verifyResult(step, context, document);
+      case 'dismiss_dialog':
+        if (dryRun && outlineOnly) {
+          return {
+            ok: false,
+            reason: 'dry_run',
+            wouldClick: true,
+            stopped_before_submit: true,
+            step_index: stepIndex,
+          };
+        }
+        return dismissMessageBox(step, context, document);
       default:
         return { ok: false, reason: `unknown_action_${step.action}` };
     }
@@ -1802,5 +1967,6 @@
     readSelectDisplayValue,
     waitForConfirmButton,
     waitForPostClickVerify,
+    dismissMessageBox,
   };
 });

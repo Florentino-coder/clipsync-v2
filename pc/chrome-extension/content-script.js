@@ -109,8 +109,9 @@ function showResultBanner(ok, detail) {
     const orderId = data && data.orderId != null ? String(data.orderId) : '';
     const amount = data && data.amount != null ? String(data.amount) : '';
     const refNumber = data && data.refNumber != null ? String(data.refNumber) : '';
+    const eventId = data && data.event_id != null ? String(data.event_id) : '';
     const profile = profileForConfirm(profiles, orderId);
-    if (!profile) return { ok: false, reason: 'no_site_profile' };
+    if (!profile) return { ok: false, reason: 'no_site_profile', event_id: eventId };
 
     if (E.isLoggedOut(profile)) {
       showSessionBanner();
@@ -205,28 +206,60 @@ function showResultBanner(ok, detail) {
       } else {
         showResultBanner(true, `ClipSync: ยืนยันสำเร็จ (จับ: ${usedKey})`);
       }
-      return { ...result, matchKey: usedKey, dry_run: dryRun };
+      return {
+        ...result,
+        matchKey: usedKey,
+        dry_run: dryRun,
+        event_id: eventId,
+        amount: amount || undefined,
+      };
     }
 
     const btnResult = await E.waitForConfirmButton(profile, rowResult.row);
     if (btnResult.status === 'already_confirmed') {
-      return { ok: true, verified: true, reason: 'already_confirmed', matchKey: usedKey };
+      return {
+        ok: true,
+        verified: true,
+        reason: 'already_confirmed',
+        matchKey: usedKey,
+        event_id: eventId,
+        amount: amount || undefined,
+      };
     }
     if (btnResult.status !== 'ok') {
-      return { ok: false, reason: btnResult.status, matchKey: usedKey };
+      return { ok: false, reason: btnResult.status, matchKey: usedKey, event_id: eventId };
     }
 
     if (dryRun) {
       E.outlineButton(btnResult.btn);
       showDryRunBanner(usedKey);
-      return { ok: false, reason: 'dry_run', wouldClick: true, matchKey: usedKey };
+      return {
+        ok: false,
+        reason: 'dry_run',
+        wouldClick: true,
+        matchKey: usedKey,
+        event_id: eventId,
+      };
     }
 
     if (typeof E.dispatchClick === 'function') E.dispatchClick(btnResult.btn);
     else btnResult.btn.click();
     const verify = await E.waitForPostClickVerify(profile, rowResult.row);
-    if (!verify.ok) return { ok: false, reason: verify.reason || 'clicked_but_unverified', matchKey: usedKey };
-    return { ok: true, verified: true, matchKey: usedKey };
+    if (!verify.ok) {
+      return {
+        ok: false,
+        reason: verify.reason || 'clicked_but_unverified',
+        matchKey: usedKey,
+        event_id: eventId,
+      };
+    }
+    return {
+      ok: true,
+      verified: true,
+      matchKey: usedKey,
+      event_id: eventId,
+      amount: amount || undefined,
+    };
   }
 
   function runHealthCheck(profiles) {

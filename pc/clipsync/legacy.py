@@ -925,7 +925,7 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
             "ref_number": ref_number,
             "amount": amount,
             "order_id": order_id,
-            "decision": "dry_run_sent" if match_key else "skipped",
+            "decision": "confirm_sent",
             "confirmed_by": "admin_manual",
         }
         append_audit(record)
@@ -955,6 +955,7 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
                     amount=amount,
                     ref_number=ref_number,
                     slip=slip_payload or None,
+                    event_id=event.get("event_id"),
                 )
             ).result(timeout=5)
         except Exception as exc:
@@ -972,23 +973,33 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
                 )
             return
 
+        # Remember for confirm_result → update Slip tab status.
+        pending = getattr(self, "_pending_manual_confirms", None)
+        if not isinstance(pending, dict):
+            pending = {}
+            self._pending_manual_confirms = pending
+        eid = str(event.get("event_id") or "")
+        if eid:
+            pending[eid] = dict(event)
+        if amount:
+            pending[f"amount:{amount}"] = dict(event)
+
         ui_event = {
             **dict(event),
-            "decision": "pending review",
-            "confirm_hint": "dry_run_sent",
+            "decision": "กำลังยืนยัน",
+            "confirm_hint": "confirm_sent",
             "confirmed_by": "admin_manual",
             "order_id": order_id,
         }
         self.push_slip_ui_event(ui_event)
         self._append_log(
-            f"Admin dry-run confirm sent ({match_key}) → {n_clients} extension(s) "
-            f"— ดูกรอบแดงบนหน้าหลังบ้าน"
+            f"Admin confirm sent ({match_key}) → {n_clients} extension(s)"
         )
         if messagebox is not None:
             messagebox.showinfo(
-                "ยืนยันเอง (dry-run)",
+                "ยืนยันเอง",
                 f"ส่งไป extension แล้ว (จับด้วย: {match_key})\n"
-                "กลับไปดูแท็บหลังบ้าน — ควรเห็นกรอบแดงรอบปุ่มตา/ปุ่มเป้าหมาย",
+                "ดูหน้าหลังบ้าน — บอทกำลังปิดงานและกดตกลงให้",
             )
 
     def _on_slip_reject(self, event: Mapping[str, Any]) -> None:

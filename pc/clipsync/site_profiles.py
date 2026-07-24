@@ -153,6 +153,7 @@ def _validate_close_job_workflow(raw: Any) -> list[dict[str, Any]]:
     allowed = {
         "check",
         "click",
+        "dismiss_dialog",
         "scroll_into_view",
         "select_option",
         "verify_or_fill",

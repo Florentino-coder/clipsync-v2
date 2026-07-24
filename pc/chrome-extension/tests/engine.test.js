@@ -24,6 +24,7 @@ const {
   collectOptionsForTrigger,
   readSelectDisplayValue,
   findStepTarget,
+  dismissMessageBox,
 } = require('../engine.js');
 
 const ORDER_FIXTURE = path.join(__dirname, '..', 'fixtures', 'order_list.html');
@@ -936,5 +937,35 @@ describe('click บันทึก when multiple matches exist', () => {
     );
     assert.ok(target, 'must find a Save button');
     assert.equal(target.id, 'save-real');
+  });
+});
+
+describe('dismiss_dialog closes Element UI MessageBox', () => {
+  it('clicks ตกลง and waits until the box is gone', async () => {
+    const dom = new JSDOM(`<!doctype html><body>
+      <div class="el-message-box__wrapper" id="box">
+        <div class="el-message-box">
+          <div class="el-message-box__title">สำเร็จ</div>
+          <div class="el-message-box__content">บันทึก รายการถอน สำเร็จ</div>
+          <div class="el-message-box__btns">
+            <button type="button" class="el-button el-button--primary" id="ok-btn">ตกลง</button>
+          </div>
+        </div>
+      </div>
+    </body>`);
+    global.document = dom.window.document;
+    const box = document.getElementById('box');
+    const btn = document.getElementById('ok-btn');
+    btn.addEventListener('click', () => {
+      box.hidden = true;
+      box.style.display = 'none';
+    });
+    const res = await dismissMessageBox(
+      { action: 'dismiss_dialog', match_text: 'ตกลง', timeout_ms: 2000 },
+      {},
+      document
+    );
+    assert.equal(res.ok, true, JSON.stringify(res));
+    assert.equal(box.hidden, true);
   });
 });

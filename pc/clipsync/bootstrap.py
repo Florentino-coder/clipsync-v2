@@ -196,10 +196,17 @@ class SlipBootstrap:
         ok = data.get("ok")
         match_key = data.get("matchKey") or data.get("tried") or "-"
         verified = data.get("verified")
-        if ok and (verified is True or reason in (None, "", "ok")):
+        event_id = str(data.get("event_id") or "")
+        amount = data.get("amount")
+        if ok and (verified is True or reason in (None, "", "ok") or data.get("dismissed")):
             msg = f"ยืนยันสำเร็จ ({match_key})"
             self._app_log(f"Extension: {msg}")
             self._app_status(msg, "#19a94b")
+            self._update_slip_row_status(
+                event_id=event_id,
+                amount=amount or match_key,
+                decision="admin_manual",
+            )
         elif reason == "dry_run":
             msg = f"dry-run พร้อมกดจริง ({match_key}) — ดูกรอบแดงบนหน้าเว็บ"
             self._app_log(f"Extension: {msg}")
@@ -208,8 +215,51 @@ class SlipBootstrap:
             msg = f"ยืนยันล้มเหลว: {reason or 'unknown'} ({match_key})"
             self._app_log(f"Extension: {msg}")
             self._app_status(msg, "#d92d20")
+            self._update_slip_row_status(
+                event_id=event_id,
+                amount=amount or match_key,
+                decision="confirm_failed",
+                extra_reason=str(reason or ""),
+            )
         if self._orchestrator is not None:
             self._orchestrator.on_confirm_result(data)
+
+    def _update_slip_row_status(
+        self,
+        *,
+        event_id: str,
+        amount: Any,
+        decision: str,
+        extra_reason: str = "",
+    ) -> None:
+        """Refresh Slip tab row after extension finishes (success or fail)."""
+        app = self._app
+        pending = getattr(app, "_pending_manual_confirms", None)
+        base: dict[str, Any] = {}
+        if isinstance(pending, dict):
+            if event_id and event_id in pending:
+                base = dict(pending.pop(event_id) or {})
+            else:
+                amt_key = f"amount:{amount}" if amount not in (None, "", "-") else ""
+                if amt_key and amt_key in pending:
+                    base = dict(pending.pop(amt_key) or {})
+        if not base:
+            base = {
+                "event_id": event_id or f"confirm-{amount}",
+                "amount": amount,
+            }
+        ui_event = {
+            **base,
+            "decision": decision,
+            "confirmed_by": "admin_manual",
+        }
+        if extra_reason:
+            ui_event["fail_reason"] = extra_reason
+
+        def _enqueue() -> None:
+            app.push_slip_ui_event(ui_event)
+
+        app.after(0, _enqueue)
 
     def _on_transport_changed(self, old: Optional[str], new: str) -> None:
         self._app.after(0, lambda: self._app.on_transport_changed(old, new))
