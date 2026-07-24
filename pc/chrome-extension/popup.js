@@ -85,3 +85,5 @@ chrome.storage.onChanged.addListener((changes, area) => {
 });
 
 refresh();
+const verEl = document.getElementById('extVersion');
+if (verEl) verEl.textContent = 'v' + (chrome.runtime.getManifest().version || '?');

@@ -153,7 +153,8 @@ function showResultBanner(ok, detail) {
             `${result.field ? '(' + result.field + ')' : ''} ` +
             `${result.tried_value ? 'ค่า=' + result.tried_value : ''} ` +
             `(จับ: ${usedKey})` +
-            `${result.hint ? ' — ' + result.hint : ''}`
+            `${result.hint ? ' — ' + result.hint : ''}` +
+            ` [ext ${chrome.runtime.getManifest().version}]`
         );
       } else {
         showResultBanner(true, `ClipSync: ยืนยันสำเร็จ (จับ: ${usedKey})`);

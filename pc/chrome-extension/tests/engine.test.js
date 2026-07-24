@@ -21,6 +21,7 @@ const {
   runWorkflow,
   selectOption,
   collectVisibleSelectOptions,
+  collectOptionsForTrigger,
   readSelectDisplayValue,
 } = require('../engine.js');
 
@@ -354,6 +355,37 @@ describe('Element UI select_option', () => {
       'ธนาคารกสิกรไทย',
       'ธนาคารไทยพาณิชย์',
     ]);
+  });
+
+  it('dedupes twin open bank dropdown panels to one option each', () => {
+    const dom = new JSDOM(`<!DOCTYPE html><body>
+      <div class="el-dialog" role="dialog">
+        <div class="el-form-item">
+          <label class="el-form-item__label">ชื่อธนาคาร</label>
+          <div id="bank" class="el-select" style="position:absolute;top:100px;left:40px;width:200px;height:32px">
+            <input class="el-input__inner" value="" placeholder="--- กรุณาเลือก ---" />
+          </div>
+        </div>
+      </div>
+      <div class="el-select-dropdown" style="position:absolute;top:10px;left:0;display:block">
+        <ul>
+          <li class="el-select-dropdown__item">ธนาคารกสิกรไทย</li>
+          <li class="el-select-dropdown__item">ธนาคารไทยพาณิชย์</li>
+        </ul>
+      </div>
+      <div class="el-select-dropdown" style="position:absolute;top:140px;left:40px;display:block">
+        <ul>
+          <li class="el-select-dropdown__item">ธนาคารกสิกรไทย</li>
+          <li class="el-select-dropdown__item">ธนาคารไทยพาณิชย์</li>
+        </ul>
+      </div>
+    </body>`);
+    global.document = dom.window.document;
+    // jsdom getBoundingClientRect is zeros — still dedupe by text across all panels via collectVisible.
+    const all = collectVisibleSelectOptions(document);
+    assert.equal(all.length, 2);
+    const near = collectOptionsForTrigger(document.getElementById('bank'), document);
+    assert.equal(near.length, 2);
   });
 
   it('rejects false success when dropdown list text leaks into trigger but input stays placeholder', async () => {

@@ -542,7 +542,113 @@
         ].filter((el) => isVisible(el) && !(el.textContent || '').includes('กรุณาเลือก'))
       );
     }
-    return [...new Set(items)];
+    return dedupeOptionsByText([...new Set(items)]);
+  }
+
+  /** Prefer the dropdown panel closest to the opened select trigger (avoids stale twin panels). */
+  function collectOptionsForTrigger(trigger, doc) {
+    const document = getDocument(doc);
+    const panels = leafVisibleDropdowns(document);
+    if (!panels.length) return [];
+    let best = panels[0];
+    if (trigger && panels.length > 1 && typeof trigger.getBoundingClientRect === 'function') {
+      const tr = trigger.getBoundingClientRect();
+      let bestScore = Infinity;
+      for (const panel of panels) {
+        try {
+          const pr = panel.getBoundingClientRect();
+          const dx = Math.abs(pr.left - tr.left);
+          const dy = Math.abs(pr.top - tr.bottom);
+          const score = dy * 2 + dx;
+          if (score < bestScore) {
+            bestScore = score;
+            best = panel;
+          }
+        } catch (_) {
+          /* ignore */
+        }
+      }
+    }
+    const items = [
+      ...best.querySelectorAll(
+        '.el-select-dropdown__item, [role="option"], .el-scrollbar__view li, li'
+      ),
+    ].filter((el) => isVisible(el) && !(el.textContent || '').includes('กรุณาเลือก'));
+    return dedupeOptionsByText(items);
+  }
+
+  function dedupeOptionsByText(items) {
+    const seen = new Set();
+    const out = [];
+    for (const el of items) {
+      const key = String(el.textContent || '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push(el);
+    }
+    return out;
+  }
+
+  function closeOpenSelectDropdowns(doc) {
+    const document = getDocument(doc);
+    if (!document) return;
+    // Escape only — never force-hide panels via CSS (orphaned panels = twin bank lists).
+    try {
+      const view = document.defaultView;
+      if (view && view.KeyboardEvent) {
+        const opts = { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true };
+        document.dispatchEvent(new view.KeyboardEvent('keydown', opts));
+        document.body && document.body.dispatchEvent(new view.KeyboardEvent('keydown', opts));
+      }
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
+  function findVueInstance(el) {
+    let cur = el;
+    for (let i = 0; cur && i < 12; i++) {
+      if (cur.__vue__) return cur.__vue__;
+      if (cur.__vueParentComponent && cur.__vueParentComponent.proxy) {
+        return cur.__vueParentComponent.proxy;
+      }
+      cur = cur.parentElement;
+    }
+    return null;
+  }
+
+  function tryApplyElementUiOption(trigger, optionEl, label) {
+    const want = String(label || (optionEl && optionEl.textContent) || '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!want) return false;
+
+    const optionVue = optionEl && (optionEl.__vue__ || null);
+    const selectVue = findVueInstance(trigger);
+    if (selectVue && typeof selectVue.handleOptionSelect === 'function') {
+      try {
+        if (optionVue) {
+          selectVue.handleOptionSelect(optionVue, true);
+          return true;
+        }
+        const opts = selectVue.options || selectVue.hoverOptions || [];
+        const match = [...opts].find((o) => {
+          const l = String(
+            (o && (o.currentLabel || o.label || o.value)) || ''
+          ).trim();
+          return l === want || l.includes(want) || want.includes(l);
+        });
+        if (match) {
+          selectVue.handleOptionSelect(match, true);
+          return true;
+        }
+      } catch (_) {
+        /* fall through */
+      }
+    }
+    return false;
   }
 
   /** Displayed value of an Element UI / native-ish select — never full trigger textContent. */
@@ -760,6 +866,10 @@
       };
     }
 
+    // Close leftover twin panels from previous select — they cause duplicate banks on screen.
+    closeOpenSelectDropdowns(document);
+    await sleep(80);
+
     const clickEl =
       trigger.querySelector('.el-input__inner, .el-select__wrapper, input, button, .dropdown-toggle') ||
       trigger;
@@ -767,13 +877,13 @@
       clickEl.scrollIntoView({ block: 'center', inline: 'nearest' });
     }
     dispatchClick(clickEl);
-    await sleep(250);
+    await sleep(300);
 
     const timeout = step.timeout_ms || 4000;
     const start = Date.now();
     let item = null;
     while (Date.now() - start < timeout) {
-      const items = collectVisibleSelectOptions(document);
+      const items = collectOptionsForTrigger(trigger, document);
       item = pickBestOption(items, value, step);
       if (!item && step.fallback_match_pattern) {
         item = pickBestOption(items, null, { ...step, match_pattern: step.fallback_match_pattern });
@@ -787,33 +897,35 @@
         reason: 'option_not_found',
         field: step.field_hint,
         tried_value: value,
-        option_count: collectVisibleSelectOptions(document).length,
+        option_count: collectOptionsForTrigger(trigger, document).length,
       };
     }
 
-    // Element UI often needs mousedown before click.
-    try {
-      const view = item.ownerDocument && item.ownerDocument.defaultView;
-      if (view && view.MouseEvent) {
-        item.dispatchEvent(new view.MouseEvent('mousedown', { bubbles: true, cancelable: true, view }));
-        item.dispatchEvent(new view.MouseEvent('mouseup', { bubbles: true, cancelable: true, view }));
-      }
-    } catch (_) {
-      /* ignore */
-    }
-    dispatchClick(item);
-
-    // Verify via the control's displayed value only (never full trigger textContent —
-    // open dropdown option labels would false-match bank names).
-    const verifyUntil = Date.now() + 2500;
     const itemText = (item.textContent || '').trim();
+    const appliedVue = tryApplyElementUiOption(trigger, item, itemText || value);
+    if (!appliedVue) {
+      try {
+        const view = item.ownerDocument && item.ownerDocument.defaultView;
+        if (view && view.MouseEvent) {
+          item.dispatchEvent(new view.MouseEvent('mousedown', { bubbles: true, cancelable: true, view }));
+          item.dispatchEvent(new view.MouseEvent('mouseup', { bubbles: true, cancelable: true, view }));
+        }
+      } catch (_) {
+        /* ignore */
+      }
+      dispatchClick(item);
+    }
+
+    const verifyUntil = Date.now() + 3000;
     while (Date.now() < verifyUntil) {
       const shown = readSelectDisplayValue(trigger);
       if (displayMatchesSelection(shown, value, step, itemText)) {
-        return { ok: true, matched: itemText };
+        closeOpenSelectDropdowns(document);
+        return { ok: true, matched: itemText, via_vue: appliedVue };
       }
       await sleep(50);
     }
+    closeOpenSelectDropdowns(document);
     return {
       ok: false,
       reason: 'option_not_applied',
@@ -1162,6 +1274,7 @@
     runWorkflowStep,
     selectOption,
     collectVisibleSelectOptions,
+    collectOptionsForTrigger,
     readSelectDisplayValue,
     waitForConfirmButton,
     waitForPostClickVerify,
