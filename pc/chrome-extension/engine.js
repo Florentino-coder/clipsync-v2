@@ -308,11 +308,11 @@
           clientX: cx,
           clientY: cy,
         };
+        // Pointer/mouse down-up help Vue listeners; a single .click() fires the action once.
         target.dispatchEvent(new view.MouseEvent('pointerdown', base));
         target.dispatchEvent(new view.MouseEvent('mousedown', base));
         target.dispatchEvent(new view.MouseEvent('pointerup', base));
         target.dispatchEvent(new view.MouseEvent('mouseup', base));
-        target.dispatchEvent(new view.MouseEvent('click', base));
       }
     } catch (_) {
       /* ignore */
@@ -325,122 +325,387 @@
     }
   }
 
+  // Content scripts run in an ISOLATED world, so `window.Swal` here is NOT the
+  // page's Swal. Reaching the page's real Swal.clickConfirm() requires running in
+  // the MAIN world. Injecting an inline <script> tag is blocked by strict CSP
+  // (Jinbao: "Executing inline script violates Content Security Policy"), so the
+  // content script registers a CSP-safe clicker that asks the background service
+  // worker to run chrome.scripting.executeScript({ world: 'MAIN', func }).
+  let mainWorldClicker = null;
+
+  /** content-script.js registers a fn that triggers a MAIN-world Swal click. */
+  function setMainWorldClicker(fn) {
+    mainWorldClicker = typeof fn === 'function' ? fn : null;
+  }
+
   /**
-   * Dismiss a success/confirm MessageBox (Element UI / Bootstrap modal).
-   * Verifies the dialog actually disappears — .click() alone often reports ok
-   * while the Jinbao success popup stays open.
+   * Ask the (CSP-safe) MAIN-world clicker to press SweetAlert2's confirm button.
+   * No-op when no clicker is registered (e.g. jsdom tests) — callers still fall
+   * back to the isolated-world Swal API + a direct `.click()`, which is the path
+   * that is confirmed working in the extension.
+   */
+  function injectMainWorldSwalClick() {
+    try {
+      if (typeof mainWorldClicker === 'function') {
+        mainWorldClicker();
+        return true;
+      }
+    } catch (_) {
+      /* ignore */
+    }
+    return false;
+  }
+
+  /**
+   * Dismiss a success/confirm dialog (SweetAlert2 on Jinbao, Element UI, plain popups).
+   * SweetAlert2 success is closed via MAIN-world injection + native click, and is
+   * considered done ONLY when `.swal2-container` is gone from the document.
+   * Never returns already_gone / ok while `.swal2-container` still exists.
    */
   async function dismissMessageBox(step, context, doc) {
     const document = getDocument(doc);
     if (!document || !document.body) {
       return { ok: false, reason: 'dismiss_no_document' };
     }
-    const boxSelectors = [
-      '.el-message-box__wrapper',
-      '.el-message-box',
-      '.el-overlay.is-message-box',
-      '[class*="message-box"]',
-      '.modal.show',
-      '.modal[style*="display: block"]',
-      '[role="dialog"]',
-      '.swal2-container',
-    ];
-    const btnNeedles = String(step.match_text || 'ตกลง|OK|Ok|ok').split('|');
-    const timeout = step.timeout_ms || 6000;
+    const win = document.defaultView || (typeof window !== 'undefined' ? window : null);
+    const btnNeedles = String(step.match_text || 'ตกลง|OK|Ok|ok')
+      .split('|')
+      .map((s) => String(s).trim())
+      .filter(Boolean);
+    const successHints = String(
+      step.success_text || 'บันทึก รายการถอน สำเร็จ|รายการถอน สำเร็จ|ปิดงานสำเร็จ'
+    )
+      .split('|')
+      .map((s) => String(s).trim())
+      .filter(Boolean);
+    const timeout = step.timeout_ms || 10000;
     const start = Date.now();
-
-    const visibleBoxes = () => {
-      const out = [];
-      for (const sel of boxSelectors) {
-        let nodes = [];
-        try {
-          nodes = [...document.querySelectorAll(sel)];
-        } catch (_) {
-          nodes = [];
-        }
-        for (const n of nodes) {
-          if (isVisible(n)) out.push(n);
-        }
-      }
-      // Prefer innermost / message-box over generic dialogs.
-      return [...new Set(out)];
-    };
-
-    const findOkButton = (box) => {
-      const buttons = [
-        ...box.querySelectorAll(
-          'button.el-button--primary, .el-message-box__btns button, .modal-footer button, button.btn-primary, button.swal2-confirm, button'
-        ),
-      ];
-      const exact = buttons.filter((b) => {
-        const t = String(b.textContent || b.value || '')
-          .replace(/\s+/g, ' ')
-          .trim();
-        return btnNeedles.some((n) => t.toLowerCase() === String(n).trim().toLowerCase());
-      });
-      if (exact.length) return exact[exact.length - 1];
-      const soft = buttons.filter((b) =>
-        btnNeedles.some((n) => textMatches(b, n))
-      );
-      if (soft.length) return soft[soft.length - 1];
-      return (
-        box.querySelector('button.el-button--primary') ||
-        box.querySelector('.el-message-box__btns button') ||
-        buttons[buttons.length - 1] ||
-        null
-      );
-    };
-
-    let lastReason = 'dismiss_dialog_not_found';
-    while (Date.now() - start < timeout) {
-      const boxes = visibleBoxes();
-      if (!boxes.length) {
-        // Already gone — treat as success (e.g. auto-closed).
-        if (Date.now() - start > 400) return { ok: true, dismissed: true, already_gone: true };
-        await sleep(80);
-        continue;
-      }
-      // Prefer a box that contains success copy when present.
-      const prefer = boxes.find((b) =>
-        /สำเร็จ|บันทึก|success|confirm/i.test(b.textContent || '')
-      );
-      const box = prefer || boxes[boxes.length - 1];
-      const btn = findOkButton(box);
-      if (!btn) {
-        lastReason = 'dismiss_button_not_found';
-        await sleep(120);
-        continue;
-      }
-      dispatchClick(btn);
-      forceClick(btn);
-      // Enter key fallback (Element UI MessageBox often binds confirm to Enter).
+    // Requirement: visible even when DevTools filter = Errors only (warn/log hidden).
+    const warn = (...args) => {
       try {
-        const view = document.defaultView;
-        if (view && view.KeyboardEvent) {
-          const opts = { bubbles: true, cancelable: true, key: 'Enter', code: 'Enter', keyCode: 13 };
-          box.dispatchEvent(new view.KeyboardEvent('keydown', opts));
-          (document.activeElement || box).dispatchEvent(new view.KeyboardEvent('keydown', opts));
+        if (typeof console !== 'undefined' && console.error) {
+          console.error('[ClipSync dismiss]', ...args);
         }
       } catch (_) {
         /* ignore */
       }
-
-      const until = Date.now() + 2500;
-      while (Date.now() < until) {
-        const still = visibleBoxes().some((b) => b === box || (box.contains && box.contains(b)));
-        const anyBox = visibleBoxes().length > 0;
-        // Success when the specific box is gone, or no message-box wrappers remain.
-        if (!still && (!anyBox || !isVisible(box))) {
-          return { ok: true, dismissed: true };
+      // NOTE: We used to also stamp the PAGE-world console by appending an inline
+      // <script>, but strict CSP (Jinbao) blocks inline scripts. Use the on-page
+      // HUD below instead — it needs no script execution and cannot violate CSP.
+      // On-page HUD so user sees activity without opening the right console filter.
+      try {
+        let hud = document.getElementById('clipsync-dismiss-hud');
+        if (!hud) {
+          hud = document.createElement('div');
+          hud.id = 'clipsync-dismiss-hud';
+          hud.setAttribute(
+            'style',
+            'position:fixed;left:8px;bottom:8px;z-index:2147483647;max-width:70vw;' +
+              'background:#111;color:#0f0;font:12px/1.35 monospace;padding:8px 10px;' +
+              'border:1px solid #0f0;border-radius:6px;opacity:0.92;pointer-events:none;'
+          );
+          document.body.appendChild(hud);
         }
-        // Some wrappers stay in DOM with display:none — isVisible handles that.
-        if (!isVisible(box)) return { ok: true, dismissed: true };
-        await sleep(100);
+        hud.textContent = '[ClipSync dismiss] ' + args.map((a) => String(a)).join(' ').slice(0, 240);
+      } catch (_) {
+        /* ignore */
       }
-      lastReason = 'dismiss_dialog_still_open';
-      await sleep(150);
+    };
+
+    const restoreDialogs = installAutoAcceptDialogs(win);
+    warn('start', { timeout, needles: btnNeedles, href: (win && win.location && win.location.href) || '' });
+
+    const buttonLabel = (b) =>
+      String(b.textContent || b.value || '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    const isOkLabel = (t) => btnNeedles.some((n) => t.toLowerCase() === String(n).toLowerCase());
+
+    const styleDisplayNone = (el) => {
+      if (!el) return true;
+      const styleAttr = (el.getAttribute && el.getAttribute('style')) || '';
+      if (/display\s*:\s*none/i.test(styleAttr)) return true;
+      try {
+        const cs = win && win.getComputedStyle && win.getComputedStyle(el);
+        if (cs && cs.display === 'none') return true;
+      } catch (_) {
+        /* ignore */
+      }
+      return false;
+    };
+
+    // DOM PRESENCE, not visibility — SweetAlert2 keeps `.swal2-container` in the
+    // document until it is fully closed; success == this node is gone.
+    const swalContainerInDom = () => document.querySelector('.swal2-container');
+    const swalConfirmBtn = () => document.querySelector('button.swal2-confirm');
+
+    const successStillVisible = () => {
+      const hay = document.body ? document.body.textContent || '' : '';
+      return successHints.some((h) => h && hay.includes(h));
+    };
+
+    /** Rank NON-swal OK buttons — BootstrapVue save-confirm / Element UI MessageBox. */
+    const findOkButtons = () => {
+      const scored = [];
+      const all = [...document.querySelectorAll('button, [role="button"], a.el-button, input[type="button"]')].filter(
+        (b) => isVisible(b) && !styleDisplayNone(b)
+      );
+      for (const b of all) {
+        const t = buttonLabel(b);
+        if (!t || t.length > 24) continue;
+        if (!isOkLabel(t)) continue;
+        let score = 100;
+        const root =
+          b.closest(
+            '.swal2-popup, .swal2-container, .modal, .modal-content, [role="dialog"], .el-message-box, .el-message-box__wrapper, .el-overlay-message-box, [role="alertdialog"], [class*="message-box"]'
+          ) || b.parentElement;
+        const around = (root && root.textContent) || '';
+        if (b.classList && b.classList.contains('swal2-confirm')) score += 5000;
+        if (successHints.some((h) => h && around.includes(h))) score += 500;
+        if (/สำเร็จ/.test(around) && around.length < 400) score += 200;
+        // BootstrapVue save-confirm: "ยืนยันการถอนรายการ" / "คุณแน่ใจใช่ไหมที่จะบันทึก"
+        if (/ยืนยันการถอน|คุณแน่ใจ/.test(around)) score += 4000;
+        if (b.classList && (b.classList.contains('el-button--primary') || b.classList.contains('btn-primary'))) {
+          score += 20;
+        }
+        if (
+          around.includes('โอนเงินทางบัญชี') &&
+          around.includes('ชื่อธนาคาร') &&
+          !successHints.some((h) => h && around.includes(h))
+        ) {
+          score -= 400;
+        }
+        scored.push({ btn: b, score, root: root || b, via: 'label' });
+      }
+      scored.sort((a, b) => b.score - a.score);
+      return scored;
+    };
+
+    const findSaveConfirmModal = () => {
+      const nodes = [
+        ...document.querySelectorAll(
+          '.modal.show, .modal[style*="display: block"], [id*="modal-withdraw"], [class*="modal"]'
+        ),
+      ];
+      return (
+        nodes.find(
+          (n) =>
+            !styleDisplayNone(n) &&
+            isVisible(n) &&
+            /ยืนยันการถอน|คุณแน่ใจใช่ไหมที่จะบันทึก/.test(n.textContent || '')
+        ) || null
+      );
+    };
+
+    const dialogStillOpen = (btn, root) => {
+      if (swalContainerInDom()) return true;
+      if (findSaveConfirmModal()) return true;
+      if (btn && document.body.contains(btn) && isVisible(btn) && !styleDisplayNone(btn)) return true;
+      if (root && document.body.contains(root) && isVisible(root) && !styleDisplayNone(root)) return true;
+      return false;
+    };
+
+    // Isolated-world Swal is usually NOT the page's Swal, but call it anyway — it is a
+    // harmless no-op in the extension and lets jsdom tests exercise the API path.
+    const trySwalApi = () => {
+      try {
+        const Swal = (win && (win.Swal || win.swal || win.Sweetalert2)) || null;
+        if (Swal && typeof Swal.clickConfirm === 'function') {
+          warn('Swal.clickConfirm()');
+          Swal.clickConfirm();
+          return true;
+        }
+      } catch (err) {
+        warn('Swal API error', String(err && err.message ? err.message : err));
+      }
+      return false;
+    };
+
+    // --- SweetAlert2 path: MAIN-world inject + native click, done when container gone.
+    const dismissSwal = async () => {
+      while (Date.now() - start < timeout) {
+        const container = swalContainerInDom();
+        if (!container) {
+          warn('swal container gone — done');
+          return { ok: true, dismissed: true, via: 'swal2' };
+        }
+        const btn = swalConfirmBtn();
+        warn('swal poll', {
+          ms: Date.now() - start,
+          hasContainer: true,
+          hasConfirm: Boolean(btn),
+          confirmText: btn ? buttonLabel(btn) : '',
+          confirmCls: btn ? (btn.className || '').toString().slice(0, 80) : '',
+        });
+
+        // 1) Reach the page's real Swal in the MAIN world (isolated world can't).
+        injectMainWorldSwalClick();
+        // 1b) Also try the isolated-world Swal API (no-op in the extension; used in tests).
+        trySwalApi();
+
+        // 2) Also click the button from the content script (works in jsdom + as a fallback).
+        if (btn) {
+          try {
+            if (typeof btn.focus === 'function') btn.focus();
+          } catch (_) {
+            /* ignore */
+          }
+          warn('swal click', { text: buttonLabel(btn) });
+          try {
+            btn.click();
+          } catch (_) {
+            forceClick(btn);
+          }
+          try {
+            if (win && win.KeyboardEvent) {
+              const opts = { bubbles: true, cancelable: true, key: 'Enter', code: 'Enter', keyCode: 13 };
+              btn.dispatchEvent(new win.KeyboardEvent('keydown', opts));
+              (document.activeElement || btn).dispatchEvent(new win.KeyboardEvent('keydown', opts));
+            }
+          } catch (_) {
+            /* ignore */
+          }
+        }
+
+        await sleep(150);
+        // Never report success while the container is still present.
+        if (!swalContainerInDom()) {
+          warn('swal container gone after click — done');
+          return { ok: true, dismissed: true, via: 'swal2' };
+        }
+      }
+      warn('swal timeout — container still present', { lastReason: 'dismiss_dialog_still_open' });
+      return { ok: false, reason: 'dismiss_dialog_still_open' };
+    };
+
+    let lastReason = 'dismiss_dialog_not_found';
+    let sawDialog = false;
+    try {
+      while (Date.now() - start < timeout) {
+        // SweetAlert2 always wins — handle it exclusively via the MAIN-world path.
+        if (swalContainerInDom()) {
+          sawDialog = true;
+          return await dismissSwal();
+        }
+
+        const cands = findOkButtons();
+        if (cands.length) sawDialog = true;
+
+        warn('poll', {
+          ms: Date.now() - start,
+          swal: false,
+          candidates: cands.map((c) => ({
+            via: c.via,
+            score: c.score,
+            text: buttonLabel(c.btn),
+            cls: (c.btn.className || '').toString().slice(0, 80),
+          })),
+          successText: successStillVisible(),
+        });
+
+        if (!cands.length) {
+          // Never already_gone while a Swal is (or might still be) around, or before
+          // we ever saw a dialog (Jinbao: toast text can flicker then Swal mounts late).
+          if (sawDialog && !successStillVisible() && !swalContainerInDom()) {
+            warn('done already_gone after prior dialog');
+            return { ok: true, dismissed: true, already_gone: true };
+          }
+          lastReason = successStillVisible() ? 'waiting_for_swal_or_ok' : 'dismiss_dialog_not_found';
+          await sleep(120);
+          continue;
+        }
+
+        const { btn, root, via } = cands[0];
+        warn('click', { via, text: buttonLabel(btn), cls: (btn.className || '').toString() });
+        try {
+          if (typeof btn.focus === 'function') btn.focus();
+        } catch (_) {
+          /* ignore */
+        }
+        try {
+          btn.click();
+        } catch (_) {
+          forceClick(btn);
+        }
+        try {
+          if (win && win.KeyboardEvent) {
+            const opts = { bubbles: true, cancelable: true, key: 'Enter', code: 'Enter', keyCode: 13 };
+            btn.dispatchEvent(new win.KeyboardEvent('keydown', opts));
+            (document.activeElement || btn).dispatchEvent(new win.KeyboardEvent('keydown', opts));
+          }
+        } catch (_) {
+          /* ignore */
+        }
+
+        const until = Date.now() + 3500;
+        while (Date.now() < until) {
+          // A SweetAlert2 popup may mount right after this click — switch to swal path.
+          if (swalContainerInDom()) {
+            warn('swal appeared after click — switching to swal path');
+            return await dismissSwal();
+          }
+          if (!dialogStillOpen(btn, root)) {
+            warn('closed ok', { via });
+            return { ok: true, dismissed: true, via };
+          }
+          await sleep(100);
+        }
+        lastReason = 'dismiss_dialog_still_open';
+        warn('still open after click, retry');
+        await sleep(150);
+      }
+      // Final guard: never report success while a Swal container remains.
+      if (swalContainerInDom()) {
+        warn('timeout — swal container still present');
+        return { ok: false, reason: 'dismiss_dialog_still_open' };
+      }
+      warn('timeout', { lastReason, sawDialog });
+      return { ok: false, reason: lastReason };
+    } finally {
+      restoreDialogs();
     }
-    return { ok: false, reason: lastReason };
+  }
+
+  /** Auto-accept page alert/confirm during dismiss so native dialogs cannot block the click path. */
+  function installAutoAcceptDialogs(win) {
+    if (!win) return () => {};
+    const originals = {};
+    try {
+      originals.alert = win.alert;
+      originals.confirm = win.confirm;
+      originals.prompt = win.prompt;
+      win.alert = function autoAlert(msg) {
+        try {
+          console.log('[ClipSync dismiss] auto-alert', msg);
+        } catch (_) {
+          /* ignore */
+        }
+        return undefined;
+      };
+      win.confirm = function autoConfirm(msg) {
+        try {
+          console.log('[ClipSync dismiss] auto-confirm', msg);
+        } catch (_) {
+          /* ignore */
+        }
+        return true;
+      };
+      win.prompt = function autoPrompt(msg, def) {
+        return def != null ? def : '';
+      };
+    } catch (_) {
+      return () => {};
+    }
+    return () => {
+      try {
+        if (originals.alert) win.alert = originals.alert;
+        if (originals.confirm) win.confirm = originals.confirm;
+        if (originals.prompt) win.prompt = originals.prompt;
+      } catch (_) {
+        /* ignore */
+      }
+    };
   }
 
   function resolvePath(obj, path) {
@@ -590,8 +855,22 @@
       cands = [];
     }
     if (!cands.length) return null;
-    cands.sort((a, b) => (a.textContent || '').length - (b.textContent || '').length);
-    return cands.find((el) => el.querySelector('fieldset, select, .el-select')) || cands[0];
+    // Prefer compact scopes that actually contain the close-job bank+account fields.
+    const withForm = cands.filter((el) => el.querySelector('fieldset, select, .el-select'));
+    const pool = withForm.length ? withForm : cands;
+    pool.sort((a, b) => {
+      const aForm =
+        (a.textContent || '').includes('ชื่อธนาคาร') && (a.textContent || '').includes('หมายเลขบัญชี')
+          ? 0
+          : 1;
+      const bForm =
+        (b.textContent || '').includes('ชื่อธนาคาร') && (b.textContent || '').includes('หมายเลขบัญชี')
+          ? 0
+          : 1;
+      if (aForm !== bForm) return aForm - bForm;
+      return (a.textContent || '').length - (b.textContent || '').length;
+    });
+    return pool[0] || null;
   }
 
   function findScopeRoot(step, context, doc) {
@@ -757,33 +1036,61 @@
     return labelEl ? labelEl.textContent || '' : '';
   }
 
+  /**
+   * Score how well a label matches field_hint.
+   * Exact "ชื่อธนาคาร" must beat page filters like "ชื่อธนาคารของสมาชิก".
+   */
+  function fieldLabelMatchScore(labelText, fieldHint) {
+    const t = String(labelText || '').replace(/\s+/g, ' ').trim();
+    const hint = String(fieldHint || '').replace(/\s+/g, ' ').trim();
+    if (!t || !hint || t.length >= 80) return -1;
+    if (t === hint) return 1000;
+    // Label is exactly hint plus short suffix/prefix punctuation only.
+    if (t.replace(/[:：\s]+$/g, '') === hint) return 950;
+    if (!t.includes(hint)) return -1;
+    // Longer labels that merely contain the hint (filters, member bank, etc.) lose.
+    return Math.max(0, 400 - (t.length - hint.length) * 20);
+  }
+
   /** Prefer real form rows that contain a control (avoid member-info display labels). */
   function findFieldContainer(root, fieldHint) {
     if (!root || !fieldHint) return null;
     // fieldset = BootstrapVue field; .form-group/.el-form-item = other frameworks.
     const formItems = [...root.querySelectorAll('fieldset, .el-form-item, .form-group')];
-    // Pass 1: label matches AND container has a control.
+    let best = null;
+    let bestScore = -1;
     for (const el of formItems) {
-      const labelText = fieldLabelText(el);
-      if (!labelText.includes(fieldHint) || labelText.length >= 80) continue;
-      if (el.querySelector(FIELD_CONTROL_SELECTOR)) return el;
+      const score = fieldLabelMatchScore(fieldLabelText(el), fieldHint);
+      if (score < 0) continue;
+      const hasControl = Boolean(el.querySelector(FIELD_CONTROL_SELECTOR));
+      const ranked = score + (hasControl ? 50 : 0);
+      if (ranked > bestScore) {
+        bestScore = ranked;
+        best = el;
+      }
     }
-    // Pass 2: label matches (control optional).
-    for (const el of formItems) {
-      const labelText = fieldLabelText(el);
-      if (labelText.includes(fieldHint) && labelText.length < 80) return el;
-    }
-    // Pass 3: generic label/div fallback.
+    if (best) return best;
+
+    // Fallback: generic label/div (same scoring).
     const labeled = [...root.querySelectorAll('label, div')];
     for (const el of labeled) {
-      const labelText = fieldLabelText(el);
-      if (labelText.includes(fieldHint) && labelText.length < 80) return el;
+      const score = fieldLabelMatchScore(fieldLabelText(el), fieldHint);
+      if (score < 0) continue;
+      if (score > bestScore) {
+        bestScore = score;
+        best = el;
+      }
     }
     for (const el of labeled) {
       const own = (el.childNodes && el.childNodes[0] && el.childNodes[0].textContent) || '';
-      if (own.includes(fieldHint) && own.length < 80) return el;
+      const score = fieldLabelMatchScore(own, fieldHint);
+      if (score < 0) continue;
+      if (score > bestScore) {
+        bestScore = score;
+        best = el;
+      }
     }
-    return null;
+    return best;
   }
 
   /**
@@ -1289,16 +1596,36 @@
   /** Set <select>.value through the native setter so Vue/React v-model picks it up, then fire events. */
   function setNativeSelectValue(select, val) {
     try {
-      const proto = Object.getPrototypeOf(select);
+      const proto =
+        (typeof HTMLSelectElement !== 'undefined' && HTMLSelectElement.prototype) ||
+        Object.getPrototypeOf(select);
       const desc = proto && Object.getOwnPropertyDescriptor(proto, 'value');
       if (desc && desc.set) desc.set.call(select, val);
       else select.value = val;
     } catch (_) {
       select.value = val;
     }
-    // BootstrapVue / Vue listen on change; some bindings also want input.
+    // BootstrapVue / Vue listen on input+change; some builds want bubbling UIEvent.
     select.dispatchEvent(domEvent(select, 'input'));
     select.dispatchEvent(domEvent(select, 'change'));
+  }
+
+  function usableNativeOptions(select) {
+    if (!select || !select.options) return [];
+    return [...select.options].filter((o) => {
+      if (o.disabled) return false;
+      const t = (o.textContent || '').trim();
+      return t && !t.includes('กรุณาเลือก') && !t.includes('ทั้งหมด');
+    });
+  }
+
+  function isBankFieldHint(hint) {
+    const h = String(hint || '');
+    return h.includes('ธนาคาร') && !h.includes('สถานะ');
+  }
+
+  function isAccountFieldHint(hint) {
+    return String(hint || '').includes('หมายเลขบัญชี') || String(hint || '').includes('เลขบัญชี');
   }
 
   /** True when a <select> is still on its empty/disabled placeholder (e.g. --- กรุณาเลือก ---). */
@@ -1345,15 +1672,64 @@
   }
 
   /**
+   * When several account <option>s matched the needle, decide the SAFE pick.
+   * Order (softened per user request — do not block when the account is knowable):
+   *   1) position-aware mask template matches exactly one option → pick it;
+   *   2) the slip last-4 matches exactly one option's last-4 → pick it;
+   *   3) 2+ options share the EXACT same last-4 as the slip needle → refuse
+   *      (account_ambiguous — genuinely unsafe to guess);
+   *   4) otherwise the matches came from a broad fallback (e.g. "all 8+ digit
+   *      options"): NEVER call that account_ambiguous — report option_not_found
+   *      when a needle existed, or missing_select_value when none did.
+   */
+  function disambiguateAccountOptions(select, matches, value, step) {
+    const digitsOf = (o) =>
+      String((o && (o.textContent || o.value)) || '').replace(/\D/g, '');
+
+    let pool = matches;
+
+    // (1) Mask template wins — it uses every visible digit, so it beats a bare last-4.
+    if (step && step._masked_template) {
+      const masked = matchMaskedOptions(select, step._masked_template);
+      if (masked.length === 1) return { option: masked[0] };
+      if (masked.length > 1) pool = masked; // narrow, then disambiguate by last-4 below
+    }
+
+    // (2)/(3) Slip last-4.
+    const needleLast4 = String(value == null ? '' : value)
+      .replace(/\D/g, '')
+      .slice(-4);
+    if (needleLast4.length === 4) {
+      const byLast4 = pool.filter((o) => digitsOf(o).slice(-4) === needleLast4);
+      if (byLast4.length === 1) return { option: byLast4[0] };
+      if (byLast4.length > 1) {
+        return {
+          reason: 'account_ambiguous',
+          hint: 'มีหลายบัญชีลงท้าย ' + needleLast4 + ' เหมือนกัน — เลือกเองเพื่อความปลอดภัย',
+        };
+      }
+      // byLast4.length === 0 → the needle did not pin any option (substring/fallback hits).
+    }
+
+    // (4) Broad fallback matched many options — do NOT treat as account_ambiguous.
+    return {
+      reason: needleLast4.length === 4 ? 'option_not_found' : 'missing_select_value',
+      hint: 'ต้องมีเลขบัญชี/มาสก์จากสลิปเพื่อเลือกบัญชีให้ถูกใบ (fallback จับได้หลายบัญชี)',
+    };
+  }
+
+  /**
    * Native <select> apply with polling — the account select is disabled + empty until the
    * bank change event repopulates it, so we wait for the real option to appear.
    */
   async function applyNativeSelect(select, value, step, root) {
-    const isAccount = step.field_hint && String(step.field_hint).includes('หมายเลขบัญชี');
+    const isAccount = isAccountFieldHint(step.field_hint);
     if (isAccount) {
-      const bankBox = root && (findFieldContainer(root, 'ชื่อธนาคาร') || findFieldContainer(root, 'ธนาคาร'));
+      const bankBox =
+        root && (findFieldContainer(root, 'ชื่อธนาคาร') || findFieldContainer(root, 'ธนาคาร'));
       const bankSelect = bankBox && bankBox.querySelector('select');
-      if (bankSelect && isPlaceholderSelectValue(bankSelect)) {
+      // Missing bank control OR still on placeholder → do not guess an account.
+      if (!bankSelect || isPlaceholderSelectValue(bankSelect)) {
         return {
           ok: false,
           reason: 'bank_not_selected',
@@ -1380,39 +1756,85 @@
         disabled: Boolean(select.disabled),
       };
     }
-    // Safety for account matching: an OCR-read last-4 must map to exactly ONE
-    // shop account. If several accounts share the same last-4, refuse to guess.
+    // Safety for account matching: prefer a unique last-4 / mask match. Only refuse
+    // (account_ambiguous) when 2+ options share the EXACT same last-4 as the slip
+    // needle. A broad fallback that matched many accounts is NOT ambiguous — it just
+    // means we lack a specific needle (option_not_found / missing_select_value).
     if (isAccount && matches.length > 1) {
-      return {
-        ok: false,
-        reason: 'account_ambiguous',
-        field: step.field_hint,
-        tried_value: value,
-        option_count: matches.length,
-        hint: 'มีหลายบัญชีลงท้ายเลขเดียวกัน — เลือกเองเพื่อความปลอดภัย',
-      };
+      const decision = disambiguateAccountOptions(select, matches, value, step);
+      if (decision.option) {
+        matches = [decision.option];
+      } else {
+        return {
+          ok: false,
+          reason: decision.reason,
+          field: step.field_hint,
+          tried_value: value,
+          option_count: matches.length,
+          hint: decision.hint,
+        };
+      }
     }
     const opt = matches[0];
-
-    setNativeSelectValue(select, opt.value);
-
-    // Verify the value actually stuck (native select reflects immediately).
-    const verifyUntil = Date.now() + 1500;
     const want = opt.value;
+
+    // Apply + require the value to stay put briefly (Vue often snaps back on next tick
+    // if it never received the change into component state).
+    let stableMs = 0;
+    const verifyUntil = Date.now() + Math.max(1500, Math.min(timeout, 4000));
     while (Date.now() < verifyUntil) {
-      if (String(select.value) === String(want)) {
-        return { ok: true, matched: (opt.textContent || '').trim(), native: true };
+      if (String(select.value) !== String(want) || isPlaceholderSelectValue(select)) {
+        setNativeSelectValue(select, want);
+        stableMs = 0;
+      } else {
+        stableMs += 50;
+        if (stableMs >= 300) break;
       }
       await sleep(50);
     }
-    return {
-      ok: false,
-      reason: 'option_not_applied',
-      field: step.field_hint,
-      tried_value: value,
-      shown: select.value,
-      hint: 'ตั้งค่า select แล้วแต่ค่าไม่ติด — ตรวจ event binding ของหน้าเว็บ',
-    };
+    if (String(select.value) !== String(want) || isPlaceholderSelectValue(select)) {
+      return {
+        ok: false,
+        reason: 'option_not_applied',
+        field: step.field_hint,
+        tried_value: value,
+        shown: select.value,
+        hint: 'ตั้งค่า select แล้วแต่ค่าไม่ติด — ตรวจ event binding ของหน้าเว็บ',
+      };
+    }
+
+    // Bank field must unlock/populate หมายเลขบัญชี. If Vue ignored the change, the
+    // native value can look selected while the UI still shows กรุณาเลือก and account
+    // stays empty — that was the live Jinbao failure mode.
+    if (isBankFieldHint(step.field_hint) && root) {
+      const acctBox = findFieldContainer(root, 'หมายเลขบัญชี');
+      const acctSelect = acctBox && acctBox.querySelector('select');
+      if (acctSelect) {
+        const depUntil = Date.now() + Math.max(2500, Math.min(timeout, 8000));
+        while (Date.now() < depUntil) {
+          if (!acctSelect.disabled && usableNativeOptions(acctSelect).length > 0) break;
+          // Re-fire bank change in case the first event was dropped.
+          if (String(select.value) !== String(want) || isPlaceholderSelectValue(select)) {
+            setNativeSelectValue(select, want);
+          } else {
+            select.dispatchEvent(domEvent(select, 'change'));
+          }
+          await sleep(120);
+        }
+        if (acctSelect.disabled || usableNativeOptions(acctSelect).length === 0) {
+          return {
+            ok: false,
+            reason: 'bank_not_applied',
+            field: step.field_hint,
+            tried_value: value,
+            matched: (opt.textContent || '').trim(),
+            hint: 'เลือกธนาคารแล้วแต่ช่องหมายเลขบัญชีไม่เปิด — ค่าไม่ถึง Vue/BootstrapVue',
+          };
+        }
+      }
+    }
+
+    return { ok: true, matched: (opt.textContent || '').trim(), native: true };
   }
 
   async function selectOption(step, context, doc) {
@@ -1515,18 +1937,30 @@
     }
 
     // Account step: refuse to proceed if bank field still on placeholder.
-    if (step.field_hint && String(step.field_hint).includes('หมายเลขบัญชี')) {
+    if (isAccountFieldHint(step.field_hint)) {
       const bankBox = findFieldContainer(root, 'ชื่อธนาคาร') || findFieldContainer(root, 'ธนาคาร');
-      const bankTrigger =
-        bankBox && bankBox.querySelector('.el-select, .el-select__wrapper, .custom-dropdown');
-      const bankShown = readSelectDisplayValue(bankTrigger);
-      if (!bankShown) {
-        return {
-          ok: false,
-          reason: 'bank_not_selected',
-          field: step.field_hint,
-          hint: 'ชื่อธนาคารยังเป็นกรุณาเลือก — ต้องเลือกธนาคารให้ติดก่อน (อย่าเปิด dropdown ซ้ำ)',
-        };
+      const bankNative = bankBox && bankBox.querySelector('select');
+      if (bankNative) {
+        if (isPlaceholderSelectValue(bankNative)) {
+          return {
+            ok: false,
+            reason: 'bank_not_selected',
+            field: step.field_hint,
+            hint: 'ชื่อธนาคารยังเป็นกรุณาเลือก — ต้องเลือกธนาคารให้ติดก่อน (อย่าเปิด dropdown ซ้ำ)',
+          };
+        }
+      } else {
+        const bankTrigger =
+          bankBox && bankBox.querySelector('.el-select, .el-select__wrapper, .custom-dropdown');
+        const bankShown = readSelectDisplayValue(bankTrigger);
+        if (!bankTrigger || !bankShown) {
+          return {
+            ok: false,
+            reason: 'bank_not_selected',
+            field: step.field_hint,
+            hint: 'ชื่อธนาคารยังเป็นกรุณาเลือก — ต้องเลือกธนาคารให้ติดก่อน (อย่าเปิด dropdown ซ้ำ)',
+          };
+        }
       }
     }
 
@@ -1844,15 +2278,45 @@
     const opts = options || {};
     const doc = opts.document || getDocument();
     const list = Array.isArray(steps) ? steps : profile.close_job_workflow || [];
+    const stepLog = (...args) => {
+      try {
+        // console.error so it shows even when DevTools filter = Errors only
+        console.error('[ClipSync WF]', ...args);
+      } catch (_) {
+        /* ignore */
+      }
+    };
 
+    stepLog('start', list.length, 'steps');
     for (let i = 0; i < list.length; i++) {
-      const result = await runWorkflowStep(list[i], i, profile, context || {}, doc, opts);
+      const step = list[i] || {};
+      stepLog('step', i, step.action, step.match_text || step.field_hint || '');
+      const result = await runWorkflowStep(step, i, profile, context || {}, doc, opts);
+      stepLog('step_done', i, step.action, result && result.ok, result && result.reason);
       if (!result.ok) {
         return {
           ok: false,
           failed_step: i,
           reason: result.reason || 'step_failed',
           ...result,
+        };
+      }
+    }
+    // Final safety: never report success while SweetAlert2 is still on screen.
+    const document = getDocument(doc);
+    if (document && document.querySelector && document.querySelector('.swal2-container')) {
+      stepLog('swal still open after workflow — force dismiss');
+      const last = await dismissMessageBox(
+        { action: 'dismiss_dialog', match_text: 'ตกลง|OK', timeout_ms: 10000 },
+        context || {},
+        doc
+      );
+      if (!last.ok || (document.querySelector && document.querySelector('.swal2-container'))) {
+        return {
+          ok: false,
+          reason: 'swal2_still_open',
+          failed_step: list.length - 1,
+          hint: 'SweetAlert2 ยังไม่ปิด — กดตกลงไม่ติด',
         };
       }
     }
@@ -1968,5 +2432,6 @@
     waitForConfirmButton,
     waitForPostClickVerify,
     dismissMessageBox,
+    setMainWorldClicker,
   };
 });

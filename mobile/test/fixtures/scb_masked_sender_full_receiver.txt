@@ -1,0 +1,15 @@
+# Real-world SCB layout: payer (จาก) account is MASKED, payee (ไปยัง) account
+# is printed in FULL (no mask). Previously the lone masked token was assigned
+# to the receiver, losing the sender entirely.
+SCB Easy
+ไทยพาณิชย์
+Siam Commercial Bank
+โอนเงินสำเร็จ
+24-07-2026 18:32
+จำนวน: 1,067.00 บาท
+รหัสอ้างอิง: 202607241234567890
+จาก นางสาว อังคณี ฉ.
+xxx-xxx747-6
+ไปยัง นาย สมชาย ใจดี
+ธนาคารกรุงไทย
+0372527587

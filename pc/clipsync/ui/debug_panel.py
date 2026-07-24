@@ -50,6 +50,51 @@ _STATUS_LABELS = {
 # Main table: time | bank | amount | from last4 | to last4 | status
 COLUMNS = ("time", "bank", "amount", "from_acct", "to_acct", "status")
 
+# Fields that must never be wiped by a weaker duplicate re-send of the same
+# event (e.g. phone re-sends slip_event without sender_account_last4).
+_STICKY_FIELDS = (
+    "sender_account_last4",
+    "sender_account_masked",
+    "sender_name",
+    "sender_account",
+    "receiver_account_last4",
+    "receiver_account_masked",
+    "receiver_account",
+    "receiver_bank",
+    "receiver_name",
+    "bank",
+    "amount",
+    "ref_number",
+    "order_id",
+    "thumbnail_jpeg_b64",
+)
+
+
+def merge_slip_event(
+    previous: Mapping[str, Any] | None, event: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Merge a re-sent slip event with what we already know about it.
+
+    A duplicate/weaker re-send (mobile retry, relay replay) may lack fields the
+    first event carried — most importantly ``sender_account_last4``. Keep the
+    richer value from the first event whenever the new one is empty. A
+    ``decision`` of ``duplicate`` must not regress an existing row's status.
+    """
+    merged = dict(event)
+    if not previous:
+        return merged
+    for key in _STICKY_FIELDS:
+        new_val = merged.get(key)
+        if new_val is None or str(new_val).strip() == "":
+            old_val = previous.get(key)
+            if old_val is not None and str(old_val).strip() != "":
+                merged[key] = old_val
+    if str(merged.get("decision") or "").strip() == "duplicate":
+        old_decision = previous.get("decision")
+        if old_decision is not None and str(old_decision).strip() != "":
+            merged["decision"] = old_decision
+    return merged
+
 
 @dataclass(frozen=True)
 class SlipRow:
@@ -278,7 +323,10 @@ class DebugPanel:
         self.frame.after(self.POLL_MS, self._poll)
 
     def _insert_row(self, event: Mapping[str, Any]) -> None:
-        row = format_slip_row(event)
+        event_id = str(event.get("event_id") or "")
+        previous = self._rows.get(event_id) if event_id else None
+        merged = merge_slip_event(previous.raw if previous else None, event)
+        row = format_slip_row(merged)
         iid = row.event_id or f"row-{len(self._rows)}"
         self._rows[iid] = row
         if self.tree.exists(iid):

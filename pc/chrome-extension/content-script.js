@@ -31,6 +31,13 @@
     }
   }
 
+  // CSP-safe MAIN-world Swal click: inline <script> injection is blocked by strict
+  // CSP, so ask the background service worker to run the click via
+  // chrome.scripting.executeScript({ world: 'MAIN', func }).
+  if (typeof E.setMainWorldClicker === 'function') {
+    E.setMainWorldClicker(() => sendToBackground({ type: 'main_world_swal_click' }));
+  }
+
 function showResultBanner(ok, detail) {
     const id = 'clipsync-result-banner';
     let banner = document.getElementById(id);
@@ -111,15 +118,19 @@ function showResultBanner(ok, detail) {
     const refNumber = data && data.refNumber != null ? String(data.refNumber) : '';
     const eventId = data && data.event_id != null ? String(data.event_id) : '';
     const profile = profileForConfirm(profiles, orderId);
-    if (!profile) return { ok: false, reason: 'no_site_profile', event_id: eventId };
+    if (!profile) {
+      return { ok: false, reason: 'no_site_profile', event_id: eventId, amount: amount || undefined };
+    }
 
     if (E.isLoggedOut(profile)) {
       showSessionBanner();
-      return { ok: false, reason: 'session_expired' };
+      return { ok: false, reason: 'session_expired', event_id: eventId, amount: amount || undefined };
     }
 
     const matchKeys = [orderId, refNumber, amount].filter((k) => k && k !== '-' && k !== 'None');
-    if (matchKeys.length === 0) return { ok: false, reason: 'no_match_key' };
+    if (matchKeys.length === 0) {
+      return { ok: false, reason: 'no_match_key', event_id: eventId, amount: amount || undefined };
+    }
 
     // Enrich slip before row lookup so same-amount rows can be narrowed by
     // member (payee) account + bank from the slip.
@@ -168,12 +179,29 @@ function showResultBanner(ok, detail) {
 
     const workflow = profile.close_job_workflow;
     if (Array.isArray(workflow) && workflow.length > 0) {
+      try {
+        console.error(
+          '[ClipSync] workflow begin',
+          chrome.runtime.getManifest().version,
+          'steps=',
+          workflow.length,
+          'dry_run=',
+          dryRun
+        );
+      } catch (_) {
+        /* ignore */
+      }
       const result = await E.runWorkflow(
         profile,
         workflow,
         { row: rowResult.row, slip, matchKey: usedKey },
         { dry_run: dryRun, outline_only: dryRun }
       );
+      try {
+        console.error('[ClipSync] workflow end', result && result.ok, result && result.reason, result && result.failed_step);
+      } catch (_) {
+        /* ignore */
+      }
       if (result.reason === 'dry_run') {
         showDryRunBanner(usedKey);
       } else if (!result.ok) {

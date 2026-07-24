@@ -6,6 +6,7 @@ from clipsync.ui.debug_panel import (
     STATUS_TAG_COLORS,
     format_slip_details,
     format_slip_row,
+    merge_slip_event,
     status_display_label,
     status_tag_for,
 )
@@ -73,6 +74,43 @@ def test_format_slip_row_missing_accounts():
     assert row.values[1] == "-"
     assert row.values[2] == "-"
     assert row.tag == "error"
+
+
+def test_merge_slip_event_keeps_sender_from_first_event():
+    first = {
+        "event_id": "evt-1",
+        "amount": 1067.0,
+        "sender_account_last4": "7476",
+        "sender_account_masked": "xxxxxx7476",
+        "receiver_account_masked": "0372527587",
+        "decision": "pending_review",
+    }
+    duplicate_resend = {
+        "event_id": "evt-1",
+        "amount": 1067.0,
+        "sender_account_last4": "",
+        "receiver_account_masked": "0372527587",
+        "decision": "duplicate",
+    }
+    merged = merge_slip_event(first, duplicate_resend)
+    # Weaker re-send must not wipe the payer account we already extracted.
+    assert merged["sender_account_last4"] == "7476"
+    assert merged["sender_account_masked"] == "xxxxxx7476"
+    # "duplicate" must not regress the row's existing status.
+    assert merged["decision"] == "pending_review"
+
+
+def test_merge_slip_event_prefers_new_non_empty_values():
+    first = {"event_id": "evt-2", "sender_account_last4": "1111", "decision": "pending_review"}
+    update = {"event_id": "evt-2", "sender_account_last4": "2222", "decision": "auto_confirmed"}
+    merged = merge_slip_event(first, update)
+    assert merged["sender_account_last4"] == "2222"
+    assert merged["decision"] == "auto_confirmed"
+
+
+def test_merge_slip_event_without_previous_is_passthrough():
+    event = {"event_id": "evt-3", "amount": 10}
+    assert merge_slip_event(None, event) == event
 
 
 def test_format_slip_details_includes_hidden_ref_order_and_names():

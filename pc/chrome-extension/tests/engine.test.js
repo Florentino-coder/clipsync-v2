@@ -603,7 +603,7 @@ describe('Element UI select_option', () => {
 });
 
 describe('BootstrapVue native <select> close-job (real Jinbao structure)', () => {
-  function makeDom() {
+  function makeDom(extraFilterHtml) {
     // Mirrors manage.jinbao356.com: 11 native selects; transfer form in a .card, labels in <legend>.
     return new JSDOM(`<!DOCTYPE html><body>
       <!-- top page filters (must NOT be picked) -->
@@ -618,6 +618,7 @@ describe('BootstrapVue native <select> close-job (real Jinbao structure)', () =>
           <option value="x3">ธนาคารไทยพาณิชย์</option>
         </select>
       </div></fieldset>
+      ${extraFilterHtml || ''}
 
       <div class="card p-4 mt-5" data-v-993c85a0>
         <div class="d-flex"><h5>โอนเงินทางบัญชี</h5></div>
@@ -739,6 +740,127 @@ describe('BootstrapVue native <select> close-job (real Jinbao structure)', () =>
     assert.ok(acct.value !== 'a2' && acct.value !== 'a3', 'must not pick a 7476 account');
   });
 
+  it('picks the uniquely-matching account among 4 distinct accounts (no account_ambiguous)', async () => {
+    // Reproduces the live screenshot: dropdown had 4 distinct accounts and everything
+    // before this step filled fine. A unique slip last-4 must be picked, not blocked.
+    const dom = makeDom();
+    global.document = dom.window.document;
+    await selectOption(
+      {
+        action: 'select_option',
+        scope: 'popup',
+        scope_text: 'โอนเงินทางบัญชี',
+        field_hint: 'ชื่อธนาคาร',
+        value_from: 'slip.bank_name_th',
+        timeout_ms: 2000,
+      },
+      { slip: { bank_name_th: 'ธนาคารกสิกรไทย' } },
+      document
+    );
+    const acct = document.getElementById('account');
+    acct.innerHTML =
+      '<option disabled value="">--- กรุณาเลือก ---</option>' +
+      '<option value="a1">4251526900</option>' +
+      '<option value="a2">4097034535</option>' +
+      '<option value="a3">3014993023</option>' +
+      '<option value="a4">5042827476</option>';
+    const res = await selectOption(
+      {
+        action: 'select_option',
+        scope: 'popup',
+        scope_text: 'โอนเงินทางบัญชี',
+        field_hint: 'หมายเลขบัญชี',
+        value_from: 'slip.sender_account_last4',
+        timeout_ms: 1000,
+      },
+      { slip: { sender_account_last4: '7476' } },
+      document
+    );
+    assert.equal(res.ok, true, JSON.stringify(res));
+    assert.equal(acct.value, 'a4', 'unique last-4 7476 must map to 5042827476');
+  });
+
+  it('does NOT flag account_ambiguous when a broad fallback matched all 8+ digit options', async () => {
+    // No slip account/mask at all → fallback ^[0-9]{8,}$ matches every account.
+    // That must fail missing_select_value, never account_ambiguous.
+    const dom = makeDom();
+    global.document = dom.window.document;
+    await selectOption(
+      {
+        action: 'select_option',
+        scope: 'popup',
+        scope_text: 'โอนเงินทางบัญชี',
+        field_hint: 'ชื่อธนาคาร',
+        value_from: 'slip.bank_name_th',
+        timeout_ms: 2000,
+      },
+      { slip: { bank_name_th: 'ธนาคารกสิกรไทย' } },
+      document
+    );
+    const acct = document.getElementById('account');
+    acct.innerHTML =
+      '<option disabled value="">--- กรุณาเลือก ---</option>' +
+      '<option value="a1">4251526900</option>' +
+      '<option value="a2">4097034535</option>' +
+      '<option value="a3">3014993023</option>' +
+      '<option value="a4">5042827476</option>';
+    const res = await selectOption(
+      {
+        action: 'select_option',
+        scope: 'popup',
+        scope_text: 'โอนเงินทางบัญชี',
+        field_hint: 'หมายเลขบัญชี',
+        fallback_match_pattern: '^[0-9]{8,}$',
+        timeout_ms: 1000,
+      },
+      { slip: {} },
+      document
+    );
+    assert.equal(res.ok, false, JSON.stringify(res));
+    assert.notEqual(res.reason, 'account_ambiguous', JSON.stringify(res));
+    assert.equal(res.reason, 'missing_select_value', JSON.stringify(res));
+  });
+
+  it('fails option_not_found (not account_ambiguous) when the slip last-4 matches none', async () => {
+    const dom = makeDom();
+    global.document = dom.window.document;
+    await selectOption(
+      {
+        action: 'select_option',
+        scope: 'popup',
+        scope_text: 'โอนเงินทางบัญชี',
+        field_hint: 'ชื่อธนาคาร',
+        value_from: 'slip.bank_name_th',
+        timeout_ms: 2000,
+      },
+      { slip: { bank_name_th: 'ธนาคารกสิกรไทย' } },
+      document
+    );
+    const acct = document.getElementById('account');
+    acct.innerHTML =
+      '<option disabled value="">--- กรุณาเลือก ---</option>' +
+      '<option value="a1">4251526900</option>' +
+      '<option value="a2">4097034535</option>' +
+      '<option value="a3">3014993023</option>' +
+      '<option value="a4">5042827476</option>';
+    const res = await selectOption(
+      {
+        action: 'select_option',
+        scope: 'popup',
+        scope_text: 'โอนเงินทางบัญชี',
+        field_hint: 'หมายเลขบัญชี',
+        value_from: 'slip.sender_account_last4',
+        fallback_match_pattern: '^[0-9]{8,}$',
+        timeout_ms: 1000,
+      },
+      { slip: { sender_account_last4: '0001' } },
+      document
+    );
+    assert.equal(res.ok, false, JSON.stringify(res));
+    assert.notEqual(res.reason, 'account_ambiguous', JSON.stringify(res));
+    assert.equal(res.reason, 'option_not_found', JSON.stringify(res));
+  });
+
   it('KBANK: masked template picks the position-correct account (last4 alone would fail)', async () => {
     const dom = makeDom();
     global.document = dom.window.document;
@@ -844,6 +966,63 @@ describe('BootstrapVue native <select> close-job (real Jinbao structure)', () =>
     );
     assert.equal(acct.ok, true, JSON.stringify(acct));
     assert.equal(document.getElementById('account').value, 'a2');
+  });
+
+  it('prefers modal ชื่อธนาคาร over page filter ชื่อธนาคารของสมาชิก', async () => {
+    const memberFilter = `
+      <fieldset class="form-group"><legend>ชื่อธนาคารของสมาชิก</legend><div>
+        <select id="member-bank-filter">
+          <option value="">--- ทั้งหมด ---</option>
+          <option value="m1" selected>ธนาคารไทยพาณิชย์</option>
+        </select>
+      </div></fieldset>`;
+    // Wide wrapper so a naive first-match would hit the member filter first.
+    const dom = makeDom(memberFilter);
+    global.document = dom.window.document;
+
+    const bank = await selectOption(
+      {
+        action: 'select_option',
+        scope: 'popup',
+        scope_text: 'โอนเงินทางบัญชี',
+        field_hint: 'ชื่อธนาคาร',
+        value_from: 'slip.bank',
+        timeout_ms: 3000,
+      },
+      { slip: { bank: 'SCB' } },
+      document
+    );
+    assert.equal(bank.ok, true, JSON.stringify(bank));
+    assert.equal(document.getElementById('bank').value, 'b4');
+    // Member filter must stay on its pre-selected value — we must not retarget it.
+    assert.equal(document.getElementById('member-bank-filter').value, 'm1');
+    assert.equal(document.getElementById('account').disabled, false);
+  });
+
+  it('fails bank_not_applied when bank value sets but account never unlocks', async () => {
+    const dom = makeDom();
+    global.document = dom.window.document;
+    // Remove the change listener population by replacing the bank node (clone has no listeners).
+    const old = document.getElementById('bank');
+    const clone = old.cloneNode(true);
+    old.parentNode.replaceChild(clone, old);
+    clone.id = 'bank';
+
+    const bank = await selectOption(
+      {
+        action: 'select_option',
+        scope: 'popup',
+        scope_text: 'โอนเงินทางบัญชี',
+        field_hint: 'ชื่อธนาคาร',
+        value_from: 'slip.bank_name_th',
+        timeout_ms: 800,
+      },
+      { slip: { bank_name_th: 'ธนาคารไทยพาณิชย์' } },
+      document
+    );
+    assert.equal(bank.ok, false, JSON.stringify(bank));
+    assert.equal(bank.reason, 'bank_not_applied', JSON.stringify(bank));
+    assert.equal(document.getElementById('account').disabled, true);
   });
 
   it('maps slip bank code SCB → ธนาคารไทยพาณิชย์', async () => {
@@ -967,5 +1146,302 @@ describe('dismiss_dialog closes Element UI MessageBox', () => {
     );
     assert.equal(res.ok, true, JSON.stringify(res));
     assert.equal(box.hidden, true);
+  });
+
+  it('finds ตกลง by success text even without el-message-box classes (no already_gone false OK)', async () => {
+    // Live Jinbao: BootstrapVue card form + success popup that may lack Element UI classes.
+    // Old logic returned already_gone:true after 400ms without clicking.
+    const dom = new JSDOM(`<!doctype html><body>
+      <div class="card">โอนเงินทางบัญชี สถานะ สำเร็จ <button type="button">บันทึก</button></div>
+      <div id="success-pop">
+        <div>สำเร็จ</div>
+        <div>บันทึก รายการถอน สำเร็จ</div>
+        <button type="button" class="btn btn-primary" id="ok-btn">ตกลง</button>
+      </div>
+    </body>`);
+    global.document = dom.window.document;
+    let clicks = 0;
+    const pop = document.getElementById('success-pop');
+    document.getElementById('ok-btn').addEventListener('click', () => {
+      clicks += 1;
+      if (pop && pop.parentNode) pop.remove();
+    });
+    const res = await dismissMessageBox(
+      { action: 'dismiss_dialog', match_text: 'ตกลง|OK', timeout_ms: 2500 },
+      {},
+      document
+    );
+    assert.equal(res.ok, true, JSON.stringify(res));
+    assert.ok(clicks >= 1, 'must click ตกลง');
+    assert.equal(!!document.getElementById('success-pop'), false);
+    assert.notEqual(res.already_gone, true);
+  });
+
+  it('prefers MessageBox ตกลง over บันทึก in the underlying withdrawal dialog', async () => {
+    const dom = new JSDOM(`<!doctype html><body>
+      <div class="el-dialog" role="dialog">
+        <div>โอนเงินทางบัญชี สถานะการถอน สำเร็จ</div>
+        <button type="button" class="el-button el-button--primary" id="save-btn">บันทึก</button>
+      </div>
+      <div class="v-custom-alert" id="box">
+        <div>สำเร็จ</div>
+        <p>บันทึก รายการถอน สำเร็จ</p>
+        <button type="button" id="ok-btn">ตกลง</button>
+      </div>
+    </body>`);
+    global.document = dom.window.document;
+    let saveClicks = 0;
+    let okClicks = 0;
+    document.getElementById('save-btn').addEventListener('click', () => {
+      saveClicks += 1;
+    });
+    document.getElementById('ok-btn').addEventListener('click', () => {
+      okClicks += 1;
+      const el = document.getElementById('box');
+      if (el) el.remove();
+    });
+    const res = await dismissMessageBox(
+      { action: 'dismiss_dialog', match_text: 'ตกลง|OK', timeout_ms: 2500 },
+      {},
+      document
+    );
+    assert.equal(res.ok, true, JSON.stringify(res));
+    assert.ok(okClicks >= 1, 'must click ตกลง');
+    assert.equal(saveClicks, 0, 'must not click บันทึก again');
+  });
+
+  it('auto-accepts window.alert triggered by the ตกลง handler', async () => {
+    const dom = new JSDOM(`<!doctype html><body>
+      <div id="box">
+        <div>บันทึก รายการถอน สำเร็จ</div>
+        <button type="button" id="ok-btn">ตกลง</button>
+      </div>
+    </body>`, { beforeParse(window) {
+      // jsdom alert stub — would throw if dismiss did not override.
+      window.alert = () => {
+        throw new Error('native alert would block — override missing');
+      };
+    }});
+    global.document = dom.window.document;
+    let alertCalls = 0;
+    document.getElementById('ok-btn').addEventListener('click', () => {
+      // Page calls alert() then removes modal / reloads.
+      dom.window.alert('done');
+      alertCalls += 1;
+      const el = document.getElementById('box');
+      if (el) el.remove();
+    });
+    const res = await dismissMessageBox(
+      { action: 'dismiss_dialog', match_text: 'ตกลง', timeout_ms: 2500 },
+      {},
+      document
+    );
+    assert.equal(res.ok, true, JSON.stringify(res));
+    assert.ok(alertCalls >= 1, 'alert handler must run');
+  });
+
+  it('clicks SweetAlert2 .swal2-confirm (Jinbao live DOM) and does not already_gone early', async () => {
+    // Exact structure from manage.jinbao356.com DevTools.
+    const dom = new JSDOM(`<!doctype html><body>
+      <div class="card">โอนเงินทางบัญชี <button type="button">บันทึก</button></div>
+      <div class="swal2-container swal2-center swal2-backdrop-show" id="swal-root">
+        <div class="swal2-popup swal2-modal swal2-icon-success swal2-show modal" role="dialog">
+          <div class="swal2-icon swal2-success swal2-icon-show"></div>
+          <h2 class="swal2-title">สำเร็จ</h2>
+          <div class="swal2-html-container">บันทึก รายการถอน สำเร็จ</div>
+          <div class="swal2-actions">
+            <button type="button" class="swal2-confirm swal2-styled" id="ok-btn" style="display: inline-block;">ตกลง</button>
+            <button type="button" class="swal2-deny swal2-styled" style="display: none;">No</button>
+            <button type="button" class="swal2-cancel swal2-styled" style="display: none;">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </body>`);
+    global.document = dom.window.document;
+    let clicks = 0;
+    document.getElementById('ok-btn').addEventListener('click', () => {
+      clicks += 1;
+      const root = document.getElementById('swal-root');
+      if (root) root.remove();
+    });
+    const res = await dismissMessageBox(
+      { action: 'dismiss_dialog', match_text: 'ตกลง|OK', timeout_ms: 3000 },
+      {},
+      document
+    );
+    assert.equal(res.ok, true, JSON.stringify(res));
+    assert.ok(clicks >= 1, 'must click .swal2-confirm');
+    assert.equal(!!document.getElementById('swal-root'), false);
+    assert.notEqual(res.already_gone, true);
+  });
+
+  it('waits for late SweetAlert2 instead of already_gone when success toast text flickers', async () => {
+    const dom = new JSDOM(`<!doctype html><body>
+      <div class="card">โอนเงินทางบัญชี <button type="button">บันทึก</button></div>
+      <div id="toast">บันทึก รายการถอน สำเร็จ</div>
+    </body>`);
+    global.document = dom.window.document;
+    let clicks = 0;
+
+    // Toast clears quickly (old bug: already_gone), then Swal appears.
+    setTimeout(() => {
+      const toast = document.getElementById('toast');
+      if (toast) toast.remove();
+    }, 50);
+    setTimeout(() => {
+      const wrap = document.createElement('div');
+      wrap.className = 'swal2-container';
+      wrap.id = 'swal-root';
+      wrap.innerHTML =
+        '<div class="swal2-popup swal2-icon-success">' +
+        '<div class="swal2-html-container">บันทึก รายการถอน สำเร็จ</div>' +
+        '<div class="swal2-actions">' +
+        '<button type="button" class="swal2-confirm swal2-styled" id="ok-btn" style="display:inline-block">ตกลง</button>' +
+        '</div></div>';
+      document.body.appendChild(wrap);
+      document.getElementById('ok-btn').addEventListener('click', () => {
+        clicks += 1;
+        wrap.remove();
+      });
+    }, 400);
+
+    const res = await dismissMessageBox(
+      { action: 'dismiss_dialog', match_text: 'ตกลง|OK', timeout_ms: 3000 },
+      {},
+      document
+    );
+    assert.equal(res.ok, true, JSON.stringify(res));
+    assert.ok(clicks >= 1, 'must wait for Swal then click');
+    assert.notEqual(res.already_gone, true);
+  });
+
+  it('uses window.Swal.clickConfirm when available', async () => {
+    const dom = new JSDOM(`<!doctype html><body>
+      <div class="swal2-container" id="swal-root">
+        <div class="swal2-popup">
+          <div class="swal2-html-container">บันทึก รายการถอน สำเร็จ</div>
+          <button type="button" class="swal2-confirm" id="ok-btn">ตกลง</button>
+        </div>
+      </div>
+    </body>`);
+    global.document = dom.window.document;
+    let apiCalls = 0;
+    dom.window.Swal = {
+      clickConfirm() {
+        apiCalls += 1;
+        const root = document.getElementById('swal-root');
+        if (root) root.remove();
+      },
+    };
+    const res = await dismissMessageBox(
+      { action: 'dismiss_dialog', match_text: 'ตกลง', timeout_ms: 2000 },
+      {},
+      document
+    );
+    assert.equal(res.ok, true, JSON.stringify(res));
+    assert.ok(apiCalls >= 1, 'must use Swal.clickConfirm');
+  });
+
+  it('never returns ok/already_gone while .swal2-container remains in the DOM', async () => {
+    // Confirm button exists but clicking it does NOT remove the container (broken v1.0.30 case).
+    const dom = new JSDOM(`<!doctype html><body>
+      <div class="swal2-container swal2-center swal2-backdrop-show" id="swal-root">
+        <div class="swal2-popup swal2-modal swal2-icon-success swal2-show" role="dialog">
+          <div class="swal2-html-container">บันทึก รายการถอน สำเร็จ</div>
+          <div class="swal2-actions">
+            <button type="button" class="swal2-confirm swal2-styled" id="ok-btn" style="display: inline-block;">ตกลง</button>
+          </div>
+        </div>
+      </div>
+    </body>`);
+    global.document = dom.window.document;
+    let clicks = 0;
+    // Deliberately no removal — mimics the click not reaching the page's Swal handler.
+    document.getElementById('ok-btn').addEventListener('click', () => {
+      clicks += 1;
+    });
+    const res = await dismissMessageBox(
+      { action: 'dismiss_dialog', match_text: 'ตกลง|OK', timeout_ms: 700 },
+      {},
+      document
+    );
+    assert.equal(res.ok, false, JSON.stringify(res));
+    assert.equal(res.reason, 'dismiss_dialog_still_open', JSON.stringify(res));
+    assert.notEqual(res.already_gone, true);
+    assert.ok(clicks >= 1, 'must have attempted the confirm click');
+    assert.ok(document.querySelector('.swal2-container'), 'container must still be present');
+  });
+
+  it('closes SweetAlert2 via the injected MAIN-world script (page Swal.clickConfirm)', async () => {
+    // runScripts lets the injected page-context <script> actually execute (like the real page).
+    const dom = new JSDOM(`<!doctype html><body>
+      <div class="swal2-container" id="swal-root">
+        <div class="swal2-popup swal2-icon-success">
+          <div class="swal2-html-container">บันทึก รายการถอน สำเร็จ</div>
+          <div class="swal2-actions">
+            <button type="button" class="swal2-confirm swal2-styled" id="ok-btn" style="display: inline-block;">ตกลง</button>
+          </div>
+        </div>
+      </div>
+      <script>
+        window.__swalConfirmCalls = 0;
+        window.Swal = {
+          clickConfirm: function () {
+            window.__swalConfirmCalls += 1;
+            var root = document.getElementById('swal-root');
+            if (root) root.remove();
+          },
+        };
+      </script>
+    </body>`, { runScripts: 'dangerously' });
+    global.document = dom.window.document;
+    // The confirm button has NO listener — only Swal.clickConfirm can close the popup.
+    const res = await dismissMessageBox(
+      { action: 'dismiss_dialog', match_text: 'ตกลง|OK', timeout_ms: 3000 },
+      {},
+      document
+    );
+    assert.equal(res.ok, true, JSON.stringify(res));
+    assert.equal(res.via, 'swal2', JSON.stringify(res));
+    assert.ok(dom.window.__swalConfirmCalls >= 1, 'page Swal.clickConfirm must be invoked');
+    assert.equal(!!document.querySelector('.swal2-container'), false);
+    assert.notEqual(res.already_gone, true);
+  });
+
+  it('clicks ตกลง on BootstrapVue save-confirm modal (ก่อน SweetAlert สำเร็จ)', async () => {
+    const dom = new JSDOM(`<!doctype html><body>
+      <div class="card">โอนเงินทางบัญชี <button type="button" class="btn btn-primary">บันทึก</button></div>
+      <div class="modal show" id="modal-withdraw-transaction" style="display: block;">
+        <div class="modal-dialog">
+          <div class="modal-content">
+            <div class="modal-header"><h5>ยืนยันการถอนรายการ</h5></div>
+            <div class="modal-body">คุณแน่ใจใช่ไหมที่จะบันทึกรายการตอนนี้ ?</div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-secondary" id="cancel-btn">ยกเลิก</button>
+              <button type="button" class="btn btn-primary" id="ok-btn">ตกลง</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </body>`);
+    global.document = dom.window.document;
+    let ok = 0;
+    let cancel = 0;
+    document.getElementById('cancel-btn').addEventListener('click', () => {
+      cancel += 1;
+    });
+    document.getElementById('ok-btn').addEventListener('click', () => {
+      ok += 1;
+      const m = document.getElementById('modal-withdraw-transaction');
+      if (m) m.remove();
+    });
+    const res = await dismissMessageBox(
+      { action: 'dismiss_dialog', match_text: 'ตกลง|OK', timeout_ms: 2500 },
+      {},
+      document
+    );
+    assert.equal(res.ok, true, JSON.stringify(res));
+    assert.ok(ok >= 1, 'must click confirm ตกลง');
+    assert.equal(cancel, 0, 'must not click ยกเลิก');
   });
 });

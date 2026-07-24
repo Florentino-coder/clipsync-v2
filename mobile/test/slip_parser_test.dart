@@ -65,6 +65,32 @@ void main() {
       expect(parsed.receiverAccountLast4, '4106');
     });
 
+    test('masked sender + FULL receiver account (real SCB layout)', () {
+      final raw = File('test/fixtures/scb_masked_sender_full_receiver.txt')
+          .readAsStringSync();
+      final parsed = ScbParser().parse(raw);
+
+      expect(parsed.valid, isTrue);
+      // The only masked token belongs to จาก (payer) — must NOT be assigned to
+      // the receiver just because it is the only masked one.
+      expect(parsed.senderAccountLast4, '7476');
+      expect(parsed.senderAccountMasked, 'xxxxxx7476');
+      // ไปยัง account is fully visible on this layout.
+      expect(parsed.receiverAccountLast4, '7587');
+      expect(parsed.receiverAccountMasked, '0372527587');
+    });
+
+    test('masked receiver + full sender resolved via จาก/ไปยัง labels', () {
+      final parsed = ScbParser().parse(
+        'SCB\nจำนวน: 250.00\nรหัสอ้างอิง: 202607241234567890\n'
+        'จาก นาย ก\n1234567890\nไปยัง นาย ข\nxxx-xxx555-9',
+      );
+
+      expect(parsed.senderAccountLast4, '7890');
+      expect(parsed.receiverAccountLast4, '5559');
+      expect(parsed.receiverAccountMasked, 'xxxxxx5559');
+    });
+
     test('sender is null when only one masked account is present', () {
       final parsed = ScbParser().parse(
         'SCB\nจำนวน 100.00\nรหัสอ้างอิง 202607221432001\nx6789',

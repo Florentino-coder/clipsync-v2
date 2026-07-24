@@ -1,4 +1,4 @@
-﻿"""
+"""
 ClipSync PC
 
 Install: pip install -r requirements.txt
@@ -897,6 +897,20 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
             slip_payload["receiver_bank"] = event.get("receiverBank")
         if "sender_name" not in slip_payload and event.get("senderName"):
             slip_payload["sender_name"] = event.get("senderName")
+        # The close-job form needs the payer ("จาก") last4. If the event carries
+        # the masked template (e.g. "xxxxxx7476") but no explicit last4, derive
+        # it from the trailing digits — no OCR needed.
+        if not slip_payload.get("sender_account_last4"):
+            masked = slip_payload.get("sender_account_masked") or event.get(
+                "senderAccountMasked"
+            )
+            if masked:
+                digits = "".join(ch for ch in str(masked) if ch.isdigit())
+                if len(digits) >= 4:
+                    slip_payload["sender_account_last4"] = digits[-4:]
+                    self._append_log(
+                        f"Slip: payer last4 derived from mask = {digits[-4:]}"
+                    )
         # The external slip app forwards only the receiver account; the close-job
         # form needs the payer ("จาก") account. Recover it by OCR'ing the slip
         # image locally so we can auto-pick the correct rotating shop account.

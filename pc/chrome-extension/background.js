@@ -26,8 +26,11 @@ function setStatus(status) {
 }
 
 function storeSiteProfiles(profiles) {
-  const list = Array.isArray(profiles) ? profiles : [];
-  return chrome.storage.local.set({ [STORAGE_KEYS.siteProfiles]: list });
+  // Always fold the bundled profiles in so a PC Push of a stale profile (e.g. an old
+  // EXE that ships a 13-step workflow) can never overwrite the bundled 16-step
+  // close_job_workflow. Bundled selectors/workflow win; only admin dry_run is kept.
+  const merged = mergeBundledProfiles(Array.isArray(profiles) ? profiles : []);
+  return chrome.storage.local.set({ [STORAGE_KEYS.siteProfiles]: merged });
 }
 
 function clearReconnectTimer() {
@@ -80,46 +83,90 @@ function forwardToBridge(message) {
 function forwardToAdminTab(data) {
   const orderId = data && data.orderId != null ? String(data.orderId) : '';
   chrome.storage.local.get([STORAGE_KEYS.siteProfiles], ({ siteProfiles }) => {
-    const patterns = (siteProfiles || []).flatMap((p) => p.domain_patterns || []);
-    if (patterns.length === 0) {
-      reportResult(orderId, false, 'no_site_profile');
-      return;
+    // Re-assert the bundled workflow on EVERY confirm before the content script reads
+    // storage — this guarantees the 16-step close_job_workflow is used even if a stale
+    // 13-step profile was pushed since the last bootstrap. Commit first, then dispatch.
+    const merged = mergeBundledProfiles(siteProfiles);
+    const dispatch = () => forwardConfirmToTab(orderId, data, merged);
+    if (JSON.stringify(siteProfiles || null) !== JSON.stringify(merged)) {
+      chrome.storage.local.set({ [STORAGE_KEYS.siteProfiles]: merged }, dispatch);
+    } else {
+      dispatch();
     }
-    chrome.tabs.query({ url: patterns }, (tabs) => {
-      if (chrome.runtime.lastError || !tabs || tabs.length === 0) {
-        reportResult(orderId, false, 'admin_tab_not_found');
+  });
+}
+
+function forwardConfirmToTab(orderId, data, profiles) {
+  // Always fold the bundled profiles in again here so a transient empty/stale
+  // `profiles` argument (e.g. storage read race) can never wrongly yield
+  // no_site_profile while the bundled jinbao profile exists.
+  const merged = mergeBundledProfiles(profiles);
+  // Carry event_id + amount on EVERY result (incl. early failures) so the PC can
+  // map the outcome back to the right Slip row instead of dropping to รอตรวจ.
+  const meta = {};
+  if (data && data.event_id != null) meta.event_id = data.event_id;
+  if (data && data.amount != null) meta.amount = data.amount;
+
+  const patterns = merged.flatMap((p) => (p && p.domain_patterns) || []);
+  if (patterns.length === 0) {
+    // Only possible when there are genuinely no bundled AND no stored profiles.
+    reportResult(orderId, false, 'no_site_profile', meta);
+    return;
+  }
+
+  const dispatchToTab = (tab) => {
+    chrome.tabs.sendMessage(tab.id, data, (resp) => {
+      if (chrome.runtime.lastError || !resp) {
+        // Existing tab may predate extension reload — inject then retry once.
+        chrome.scripting.executeScript(
+          { target: { tabId: tab.id, allFrames: true }, files: ['engine.js', 'content-script.js'] },
+          () => {
+            if (chrome.runtime.lastError) {
+              reportResult(orderId, false, 'content_script_unreachable', meta);
+              return;
+            }
+            chrome.tabs.sendMessage(tab.id, data, (resp2) => {
+              if (chrome.runtime.lastError || !resp2) {
+                reportResult(orderId, false, 'content_script_unreachable', meta);
+                return;
+              }
+              reportResult(orderId, resp2.ok, resp2.reason, { ...meta, ...resp2 });
+            });
+          }
+        );
         return;
       }
-      // Prefer the most recently used admin tab (user is looking at it).
-      const sorted = tabs.slice().sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0));
-      const tab = sorted[0];
-      const send = () => {
-        chrome.tabs.sendMessage(tab.id, data, (resp) => {
-          if (chrome.runtime.lastError || !resp) {
-            // Existing tab may predate extension reload — inject then retry once.
-            chrome.scripting.executeScript(
-              { target: { tabId: tab.id, allFrames: true }, files: ['engine.js', 'content-script.js'] },
-              () => {
-                if (chrome.runtime.lastError) {
-                  reportResult(orderId, false, 'content_script_unreachable');
-                  return;
-                }
-                chrome.tabs.sendMessage(tab.id, data, (resp2) => {
-                  if (chrome.runtime.lastError || !resp2) {
-                    reportResult(orderId, false, 'content_script_unreachable');
-                    return;
-                  }
-                  reportResult(orderId, resp2.ok, resp2.reason, resp2);
-                });
-              }
-            );
-            return;
-          }
-          reportResult(orderId, resp.ok, resp.reason, resp);
-        });
-      };
-      send();
+      reportResult(orderId, resp.ok, resp.reason, { ...meta, ...resp });
     });
+  };
+
+  const pickTabAndSend = (tabs) => {
+    // Prefer an ACTIVE tab (user is looking at it), then most recently accessed.
+    const sorted = tabs
+      .slice()
+      .sort(
+        (a, b) =>
+          Number(Boolean(b.active)) - Number(Boolean(a.active)) ||
+          (b.lastAccessed || 0) - (a.lastAccessed || 0)
+      );
+    dispatchToTab(sorted[0]);
+  };
+
+  chrome.tabs.query({ url: patterns }, (tabs) => {
+    if (!chrome.runtime.lastError && tabs && tabs.length > 0) {
+      pickTabAndSend(tabs);
+      return;
+    }
+    // Retry once — the admin tab may still be loading / the query briefly raced.
+    setTimeout(() => {
+      chrome.tabs.query({ url: patterns }, (tabs2) => {
+        if (chrome.runtime.lastError || !tabs2 || tabs2.length === 0) {
+          reportResult(orderId, false, 'admin_tab_not_found', meta);
+          return;
+        }
+        pickTabAndSend(tabs2);
+      });
+    }, 300);
   });
 }
 
@@ -225,7 +272,10 @@ function mergeBundledProfiles(existing) {
     const idx = list.findIndex((p) => p && p.profile_id === profile.profile_id);
     if (idx >= 0) {
       const prev = list[idx] || {};
-      // Ship selector/workflow fixes, but keep the admin's dry_run toggle.
+      // Bundled ALWAYS wins for close_job_workflow + field matchers (spread of the
+      // bundled profile replaces every stored field). The ONLY thing we keep from the
+      // stored profile is the admin's dry_run toggle, so a stale PC-pushed profile can
+      // never downgrade the workflow (e.g. back to 13 steps).
       list[idx] = {
         ...profile,
         dry_run: typeof prev.dry_run === 'boolean' ? prev.dry_run : profile.dry_run,
@@ -274,8 +324,39 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
 });
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+/** MAIN-world SweetAlert2 confirm click (CSP-safe alternative to inline <script>). */
+function mainWorldSwalClick() {
+  try {
+    if (window.Swal && typeof window.Swal.clickConfirm === 'function') {
+      window.Swal.clickConfirm();
+      return;
+    }
+  } catch (_) {
+    /* ignore */
+  }
+  const btn = document.querySelector('button.swal2-confirm');
+  if (btn) btn.click();
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || typeof message !== 'object') return;
+
+  // Content script (isolated world) asks us to click SweetAlert2 in the MAIN world.
+  if (message.type === 'main_world_swal_click') {
+    const tabId = sender && sender.tab && sender.tab.id;
+    if (typeof tabId === 'number' && chrome.scripting && chrome.scripting.executeScript) {
+      try {
+        chrome.scripting.executeScript(
+          { target: { tabId, allFrames: true }, world: 'MAIN', func: mainWorldSwalClick },
+          () => void chrome.runtime.lastError
+        );
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    sendResponse({ ok: true });
+    return true;
+  }
 
   if (message.type === 'site_profiles') {
     storeSiteProfiles(message.profiles).then(() => sendResponse({ ok: true }));

@@ -1,5 +1,6 @@
-// Auto-bundled default Site Profiles — seeded when storage is empty.
-const BUNDLED_SITE_PROFILES = [
+// Service-worker safe (no window).
+// AUTO-GENERATED from profiles/*.json — do not edit by hand.
+globalThis.BUNDLED_SITE_PROFILES = [
   {
     "profile_id": "jinbao356_v1",
     "domain_patterns": [
@@ -141,6 +142,16 @@ const BUNDLED_SITE_PROFILES = [
       },
       {
         "action": "wait_for",
+        "match_text": "ยืนยันการถอนรายการ|คุณแน่ใจใช่ไหมที่จะบันทึก|บันทึก รายการถอน สำเร็จ",
+        "timeout_ms": 8000
+      },
+      {
+        "action": "dismiss_dialog",
+        "match_text": "ตกลง|OK",
+        "timeout_ms": 8000
+      },
+      {
+        "action": "wait_for",
         "match_text": "บันทึก รายการถอน สำเร็จ|รายการถอน สำเร็จ",
         "timeout_ms": 10000
       },
@@ -156,16 +167,15 @@ const BUNDLED_SITE_PROFILES = [
       {
         "action": "dismiss_dialog",
         "match_text": "ตกลง|OK",
-        "timeout_ms": 8000
+        "timeout_ms": 10000
       }
     ],
     "_notes": [
       "Target page: https://manage.jinbao356.com/withdraw/transaction",
       "Close-job form is below the fold in the withdrawal modal — scroll_into_view first.",
-      "Shop payout account is matched by the slip 'จาก' (sender) account. Prefer the position-aware mask template (sender_account_masked) which works across banks that hide the tail (KBANK) or show few digits (BBL); sender_account_last4 is a fallback.",
+      "After บันทึก, Jinbao shows BootstrapVue confirm (ยืนยันการถอนรายการ) — click ตกลง, then SweetAlert2 success — click ตกลง again.",
+      "Shop payout account is matched by the slip 'จาก' (sender) account. Prefer the position-aware mask template (sender_account_masked, e.g. '5840xxx518') which works across banks that hide the tail (KBANK 'xxx-x-x0758-x') or show few digits (BBL '584-0-xxx518'); sender_account_last4 is a fallback.",
       "Keep dry_run true until live clicks are verified end-to-end."
     ]
   }
 ];
-
-globalThis.BUNDLED_SITE_PROFILES = BUNDLED_SITE_PROFILES;

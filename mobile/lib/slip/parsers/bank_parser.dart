@@ -125,13 +125,31 @@ ParsedSlip parseSlipFields(
       RegExp(r'[0-9xX\*\u2022\u00d7\u25cf][0-9xX\*\u2022\u00d7\u25cf\-]{4,}');
   final hasMask = RegExp(r'[xX\*\u2022\u00d7\u25cf]');
   final maskedTemplates = <String>[];
+  final maskedPositions = <int>[];
+  // Fully visible account numbers (SCB shows the payee "ไปยัง" account with no
+  // mask at all, e.g. "0372527587"). Kept separate from masked templates.
+  final fullAccounts = <String>[];
+  final fullAccountPositions = <int>[];
+  final dateLike = RegExp(r'^\d{1,2}-\d{1,2}-\d{2,4}$|^\d{4}-\d{1,2}-\d{1,2}$');
   for (final match in tokenRe.allMatches(raw)) {
     final token = match.group(0)!;
-    if (!hasMask.hasMatch(token)) continue;
+    if (!hasMask.hasMatch(token)) {
+      // No masking glyph — candidate for a full account number. Require 8–14
+      // digits so amounts stay too short and ref numbers (15+) too long, and
+      // skip date-shaped tokens like 24-07-2026.
+      if (dateLike.hasMatch(token)) continue;
+      final digits = token.replaceAll(RegExp(r'[^0-9]'), '');
+      if (digits.length >= 8 && digits.length <= 14) {
+        fullAccounts.add(digits);
+        fullAccountPositions.add(match.start);
+      }
+      continue;
+    }
     final normalized = normalizeMaskedAccount(token);
     final digitCount = normalized.replaceAll(RegExp(r'[^0-9]'), '').length;
     if (digitCount >= 2) {
       maskedTemplates.add(normalized);
+      maskedPositions.add(match.start);
     }
   }
 
@@ -141,13 +159,44 @@ ParsedSlip parseSlipFields(
     return digits.length >= 4 ? digits.substring(digits.length - 4) : null;
   }
 
+  // Section labels, when OCR managed to read them. จาก = payer, ไปยัง = payee.
+  // A token belongs to the section of the closest label ABOVE it.
+  bool inReceiverSection(int pos) {
+    final fromLast = raw.lastIndexOf('จาก', pos);
+    final toLast = raw.lastIndexOf('ไปยัง', pos);
+    return toLast >= 0 && toLast > fromLast;
+  }
+
   String? senderMasked;
   String? receiverMasked;
   if (maskedTemplates.length >= 2) {
     senderMasked = maskedTemplates.first;
     receiverMasked = maskedTemplates.last;
   } else if (maskedTemplates.length == 1) {
-    receiverMasked = maskedTemplates.first;
+    if (fullAccounts.isNotEmpty) {
+      // SCB-style slip: the payer ("จาก") account is the only masked token and
+      // the payee ("ไปยัง") account is printed in full. Prefer the จาก/ไปยัง
+      // labels when readable; otherwise assume masked=payer, full=payee.
+      final maskedIsReceiver = inReceiverSection(maskedPositions.first);
+      if (maskedIsReceiver) {
+        receiverMasked = maskedTemplates.first;
+        senderMasked = fullAccounts.first;
+      } else {
+        senderMasked = maskedTemplates.first;
+        // Pick the full account in the ไปยัง section when labels are readable,
+        // else the last one (payee is listed last on Thai slips).
+        var receiverFull = fullAccounts.last;
+        for (var i = 0; i < fullAccounts.length; i++) {
+          if (inReceiverSection(fullAccountPositions[i])) {
+            receiverFull = fullAccounts[i];
+            break;
+          }
+        }
+        receiverMasked = receiverFull;
+      }
+    } else {
+      receiverMasked = maskedTemplates.first;
+    }
   }
   if (receiverMasked == null) {
     errors.add('last4_missing');
