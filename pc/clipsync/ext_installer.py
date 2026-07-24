@@ -49,6 +49,37 @@ def extension_dir(base: Path | None = None) -> Path:
     return root / EXTENSION_DIRNAME
 
 
+def site_profiles_dir(base: Path | None = None) -> Path:
+    """Resolve ``chrome-extension/profiles`` for Push Site Profiles.
+
+    Frozen builds often live in Downloads without a profiles folder next to the
+    exe. Prefer the first existing candidate: beside the app, PyInstaller
+    extract dir, then the source tree next to this module (``pc/``).
+    """
+    root = Path(base) if base is not None else app_base_dir()
+    candidates: list[Path] = [root / EXTENSION_DIRNAME / "profiles"]
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            meipass_path = Path(meipass)
+            candidates.append(meipass_path / EXTENSION_DIRNAME / "profiles")
+            candidates.append(meipass_path / "profiles")
+    # clipsync/ext_installer.py -> pc/chrome-extension/profiles (dev / worktree)
+    candidates.append(Path(__file__).resolve().parent.parent / EXTENSION_DIRNAME / "profiles")
+
+    seen: set[Path] = set()
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if candidate.is_dir():
+            return candidate
+
+    tried = ", ".join(str(c) for c in candidates)
+    raise FileNotFoundError(f"ไม่พบโฟลเดอร์ profiles (ลองแล้ว: {tried})")
+
+
 def local_manifest_version(extension_path: Path | None = None) -> str:
     path = Path(extension_path) if extension_path is not None else extension_dir()
     manifest_path = path / MANIFEST_NAME if path.name != MANIFEST_NAME else path

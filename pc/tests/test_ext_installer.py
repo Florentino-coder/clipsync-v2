@@ -259,3 +259,17 @@ def test_extract_extension_zip_supports_nested_folder(tmp_path: Path):
     ext_installer.extract_extension_zip(zip_bytes.getvalue(), target)
 
     assert ext_installer.local_manifest_version(target) == "9.9.9"
+
+def test_site_profiles_dir_prefers_existing_under_base(tmp_path: Path):
+    profiles = tmp_path / "chrome-extension" / "profiles"
+    profiles.mkdir(parents=True)
+    (profiles / "jinbao356_v1.json").write_text("{}", encoding="utf-8")
+    assert ext_installer.site_profiles_dir(base=tmp_path) == profiles
+
+
+def test_site_profiles_dir_falls_back_to_source_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    # Empty base (no profiles beside exe) should still find pc/chrome-extension/profiles.
+    monkeypatch.setattr(ext_installer.sys, "frozen", False, raising=False)
+    resolved = ext_installer.site_profiles_dir(base=tmp_path)
+    assert resolved.is_dir()
+    assert (resolved / "jinbao356_v1.json").is_file()

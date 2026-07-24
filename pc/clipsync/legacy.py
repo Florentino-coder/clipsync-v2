@@ -765,7 +765,7 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
 
     def push_site_profiles_to_extension(self) -> None:
         """Load non-example profiles and push to the connected Chrome extension."""
-        from clipsync.ext_installer import extension_dir
+        from clipsync.ext_installer import site_profiles_dir
         from clipsync.site_profiles import load_profiles
 
         bridge = getattr(self, "_slip_override_bridge", None)
@@ -775,9 +775,7 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
                 "(ต้องมี pairing token และ extension ขึ้น connected)"
             )
 
-        profiles_dir = extension_dir() / "profiles"
-        if not profiles_dir.is_dir():
-            raise FileNotFoundError(f"ไม่พบโฟลเดอร์ profiles: {profiles_dir}")
+        profiles_dir = site_profiles_dir()
 
         profiles: list[dict[str, Any]] = []
         for path in sorted(profiles_dir.glob("*.json")):
