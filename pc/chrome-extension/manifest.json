@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ClipSync Auto Confirm",
-  "version": "1.0.13",
+  "version": "1.0.14",
   "description": "Site-profile driven order confirm for ClipSync (localhost bridge).",
   "permissions": ["storage", "alarms", "tabs", "scripting"],
   "host_permissions": ["<all_urls>"],

@@ -594,13 +594,27 @@
   function closeOpenSelectDropdowns(doc) {
     const document = getDocument(doc);
     if (!document) return;
-    // Escape only — never force-hide panels via CSS (orphaned panels = twin bank lists).
+    // Prefer Vue visible=false on every el-select (avoids Escape/click toggle races).
+    try {
+      const selects = [...document.querySelectorAll('.el-select, .el-select__wrapper')];
+      for (const el of selects) {
+        const vue = findVueInstance(el);
+        if (vue && 'visible' in vue) {
+          try {
+            vue.visible = false;
+          } catch (_) {
+            /* ignore */
+          }
+        }
+      }
+    } catch (_) {
+      /* ignore */
+    }
     try {
       const view = document.defaultView;
       if (view && view.KeyboardEvent) {
         const opts = { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true };
         document.dispatchEvent(new view.KeyboardEvent('keydown', opts));
-        document.body && document.body.dispatchEvent(new view.KeyboardEvent('keydown', opts));
       }
     } catch (_) {
       /* ignore */
@@ -619,36 +633,85 @@
     return null;
   }
 
+  function optionLabelOf(opt) {
+    if (!opt) return '';
+    return String(opt.currentLabel || opt.label || opt.value || '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  /** Open Element UI select once via Vue — never open twice (that appends twin option lists 4→8). */
+  function openElementUiSelect(trigger) {
+    const vue = findVueInstance(trigger);
+    if (vue && 'visible' in vue) {
+      try {
+        vue.visible = false;
+      } catch (_) {
+        /* ignore */
+      }
+      try {
+        vue.visible = true;
+        return { ok: true, via: 'vue' };
+      } catch (_) {
+        /* fall through */
+      }
+    }
+    const clickEl =
+      (trigger &&
+        trigger.querySelector &&
+        trigger.querySelector('.el-input__inner, .el-select__wrapper, input, button, .dropdown-toggle')) ||
+      trigger;
+    // One open only — a second click toggles closed/re-mounts and duplicates banks.
+    dispatchClick(clickEl);
+    return { ok: true, via: 'click' };
+  }
+
+  /**
+   * Apply option via Element UI Select's own options list (safe).
+   * Do NOT pass random DOM __vue__ nodes — that can mutate/duplicate options (4 → 8).
+   */
   function tryApplyElementUiOption(trigger, optionEl, label) {
     const want = String(label || (optionEl && optionEl.textContent) || '')
       .replace(/\s+/g, ' ')
       .trim();
     if (!want) return false;
 
-    const optionVue = optionEl && (optionEl.__vue__ || null);
     const selectVue = findVueInstance(trigger);
-    if (selectVue && typeof selectVue.handleOptionSelect === 'function') {
-      try {
-        if (optionVue) {
-          selectVue.handleOptionSelect(optionVue, true);
-          return true;
-        }
-        const opts = selectVue.options || selectVue.hoverOptions || [];
-        const match = [...opts].find((o) => {
-          const l = String(
-            (o && (o.currentLabel || o.label || o.value)) || ''
-          ).trim();
-          return l === want || l.includes(want) || want.includes(l);
-        });
-        if (match) {
-          selectVue.handleOptionSelect(match, true);
-          return true;
-        }
-      } catch (_) {
-        /* fall through */
+    if (!selectVue || typeof selectVue.handleOptionSelect !== 'function') return false;
+
+    try {
+      const opts = [...(selectVue.options || []), ...(selectVue.hoverOptions || [])];
+      // De-dupe by label in case the site already doubled the list.
+      const seen = new Set();
+      const unique = [];
+      for (const o of opts) {
+        const l = optionLabelOf(o);
+        if (!l || l.includes('กรุณาเลือก') || seen.has(l)) continue;
+        seen.add(l);
+        unique.push(o);
       }
+      const match =
+        unique.find((o) => optionLabelOf(o) === want) ||
+        unique.find((o) => optionLabelOf(o).includes(want) || want.includes(optionLabelOf(o))) ||
+        unique.find((o) => bankMatchNeedles(want).some((n) => optionLabelOf(o).includes(n)));
+      if (!match) return false;
+      selectVue.handleOptionSelect(match);
+      if ('visible' in selectVue) selectVue.visible = false;
+      return true;
+    } catch (_) {
+      return false;
     }
-    return false;
+  }
+
+  function clickOptionOnce(optionEl) {
+    if (!optionEl) return false;
+    // Single native click only — mousedown+click combo double-fires on some Element UI builds.
+    try {
+      optionEl.click();
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   /** Displayed value of an Element UI / native-ish select — never full trigger textContent. */
@@ -866,29 +929,50 @@
       };
     }
 
-    // Close leftover twin panels from previous select — they cause duplicate banks on screen.
-    closeOpenSelectDropdowns(document);
-    await sleep(80);
-
-    const clickEl =
-      trigger.querySelector('.el-input__inner, .el-select__wrapper, input, button, .dropdown-toggle') ||
-      trigger;
-    if (typeof clickEl.scrollIntoView === 'function') {
-      clickEl.scrollIntoView({ block: 'center', inline: 'nearest' });
+    // Account step: refuse to proceed if bank field still on placeholder.
+    if (step.field_hint && String(step.field_hint).includes('หมายเลขบัญชี')) {
+      const bankBox = findFieldContainer(root, 'ชื่อธนาคาร') || findFieldContainer(root, 'ธนาคาร');
+      const bankTrigger =
+        bankBox && bankBox.querySelector('.el-select, .el-select__wrapper, .custom-dropdown');
+      const bankShown = readSelectDisplayValue(bankTrigger);
+      if (!bankShown) {
+        return {
+          ok: false,
+          reason: 'bank_not_selected',
+          field: step.field_hint,
+          hint: 'ชื่อธนาคารยังเป็นกรุณาเลือก — ต้องเลือกธนาคารให้ติดก่อน (อย่าเปิด dropdown ซ้ำ)',
+        };
+      }
     }
-    dispatchClick(clickEl);
+
+    // Close leftover selects first — twin open panels look like 4→8 banks.
+    closeOpenSelectDropdowns(document);
+    await sleep(100);
+
+    if (typeof trigger.scrollIntoView === 'function') {
+      trigger.scrollIntoView({ block: 'center', inline: 'nearest' });
+    }
+    openElementUiSelect(trigger);
     await sleep(300);
 
     const timeout = step.timeout_ms || 4000;
     const start = Date.now();
     let item = null;
+    let optionCount = 0;
+    let reopened = false;
     while (Date.now() - start < timeout) {
       const items = collectOptionsForTrigger(trigger, document);
+      optionCount = items.length;
       item = pickBestOption(items, value, step);
       if (!item && step.fallback_match_pattern) {
         item = pickBestOption(items, null, { ...step, match_pattern: step.fallback_match_pattern });
       }
       if (item) break;
+      // Soft re-open once if nothing appeared (never spam — spam causes 4→8 banks).
+      if (!reopened && Date.now() - start > 800 && optionCount === 0) {
+        reopened = true;
+        openElementUiSelect(trigger);
+      }
       await sleep(50);
     }
     if (!item) {
@@ -897,31 +981,21 @@
         reason: 'option_not_found',
         field: step.field_hint,
         tried_value: value,
-        option_count: collectOptionsForTrigger(trigger, document).length,
+        option_count: optionCount,
       };
     }
 
     const itemText = (item.textContent || '').trim();
+    // Prefer Vue options API (deduped). Fallback: single mousedown on the li — never click+mousedown combo.
     const appliedVue = tryApplyElementUiOption(trigger, item, itemText || value);
-    if (!appliedVue) {
-      try {
-        const view = item.ownerDocument && item.ownerDocument.defaultView;
-        if (view && view.MouseEvent) {
-          item.dispatchEvent(new view.MouseEvent('mousedown', { bubbles: true, cancelable: true, view }));
-          item.dispatchEvent(new view.MouseEvent('mouseup', { bubbles: true, cancelable: true, view }));
-        }
-      } catch (_) {
-        /* ignore */
-      }
-      dispatchClick(item);
-    }
+    if (!appliedVue) clickOptionOnce(item);
 
     const verifyUntil = Date.now() + 3000;
     while (Date.now() < verifyUntil) {
       const shown = readSelectDisplayValue(trigger);
       if (displayMatchesSelection(shown, value, step, itemText)) {
         closeOpenSelectDropdowns(document);
-        return { ok: true, matched: itemText, via_vue: appliedVue };
+        return { ok: true, matched: itemText, via_vue: appliedVue, option_count: optionCount };
       }
       await sleep(50);
     }
@@ -932,7 +1006,8 @@
       field: step.field_hint,
       tried_value: value,
       shown: readSelectDisplayValue(trigger),
-      hint: 'คลิกตัวเลือกแล้วแต่ฟอร์มไม่เปลี่ยน — มักเป็น dropdown Element UI',
+      option_count: optionCount,
+      hint: 'เลือกแล้วแต่ค่าไม่ติด — มักเปิด dropdown ซ้ำจนธนาคารกลายเป็น 8 รายการ',
     };
   }
 
