@@ -90,20 +90,20 @@
       "field_hint": "ชื่อธนาคาร",
       "value_from": "slip.bank_name_th",
       "value_from_fallbacks": ["slip.bank_name", "slip.bank"],
-      "timeout_ms": 6000
+      "timeout_ms": 8000
+    },
+    {
+      "action": "wait_for",
+      "scope": "popup",
+      "match_text": "ธนาคารไทยพาณิชย์|ธนาคารกสิกรไทย|ธนาคารกรุงไทย|ธนาคารออมสิน|ธนาคารกรุงเทพ|ธนาคารทหารไทย",
+      "timeout_ms": 5000
     },
     {
       "action": "select_option",
       "scope": "popup",
       "field_hint": "หมายเลขบัญชี",
-      "value_from": "slip.sender_account",
-      "value_from_fallbacks": [
-        "slip.account_number",
-        "slip.receiver_account_last4",
-        "slip.receiver_account"
-      ],
       "fallback_match_pattern": "^[0-9]{8,}$",
-      "timeout_ms": 6000
+      "timeout_ms": 8000
     },
     {
       "action": "click",

@@ -627,25 +627,38 @@
       return { ok: true, matched: native.textContent };
     }
 
-    // Element UI / custom dropdown
+    // Element UI / custom dropdown — prefer real el-select in the field box.
     let trigger =
-      (fieldBox &&
-        fieldBox.querySelector(
-          '.el-select, .el-select__wrapper, [class*="select"], .custom-dropdown, [class*="dropdown"]'
-        )) ||
+      (fieldBox && fieldBox.querySelector('.el-select, .el-select__wrapper')) ||
+      (fieldBox && fieldBox.querySelector('.custom-dropdown, [class*="dropdown"]')) ||
       null;
     if (!trigger && step.field_hint) {
-      const labels = [...root.querySelectorAll('label')].filter((l) =>
-        (l.textContent || '').includes(step.field_hint)
-      );
+      const labels = [...root.querySelectorAll('label, .el-form-item')].filter((l) => {
+        const t = (l.querySelector('.el-form-item__label, label') || l).textContent || '';
+        return t.includes(step.field_hint) && t.length < 80;
+      });
       if (labels.length) {
-        trigger = labels[0].querySelector('.el-select, .custom-dropdown, [class*="dropdown"], [class*="select"]');
+        trigger = labels[0].querySelector('.el-select, .el-select__wrapper, .custom-dropdown');
       }
     }
     if (!trigger) {
-      trigger = root.querySelector('.el-select, .custom-dropdown, [class*="dropdown"]');
+      trigger = root.querySelector('.el-select, .custom-dropdown');
     }
-    if (!trigger) return { ok: false, reason: 'select_control_not_found' };
+    if (!trigger) return { ok: false, reason: 'select_control_not_found', field: step.field_hint };
+
+    // Disabled select (e.g. account before bank chosen).
+    const disabled =
+      trigger.classList.contains('is-disabled') ||
+      trigger.getAttribute('aria-disabled') === 'true' ||
+      Boolean(trigger.querySelector('.is-disabled, [disabled]'));
+    if (disabled) {
+      return {
+        ok: false,
+        reason: 'select_disabled',
+        field: step.field_hint,
+        hint: 'เลือกชื่อธนาคารให้ติดก่อน ช่องหมายเลขบัญชีถึงจะเปิด',
+      };
+    }
 
     const clickEl =
       trigger.querySelector('.el-input__inner, .el-select__wrapper, input, button, .dropdown-toggle') ||
@@ -654,16 +667,26 @@
       clickEl.scrollIntoView({ block: 'center', inline: 'nearest' });
     }
     dispatchClick(clickEl);
+    await sleep(200);
 
     const timeout = step.timeout_ms || 4000;
     const start = Date.now();
     let item = null;
     while (Date.now() - start < timeout) {
-      const items = [
-        ...document.querySelectorAll(
-          '.el-select-dropdown__item, .el-scrollbar__view li, [role="option"], .dropdown-menu li, li'
-        ),
-      ].filter((el) => isVisible(el));
+      const dropdowns = [...document.querySelectorAll('.el-select-dropdown, .el-popper, .dropdown-menu')].filter(
+        (el) => isVisible(el)
+      );
+      const scopes = dropdowns.length ? dropdowns : [document];
+      const items = [];
+      for (const scope of scopes) {
+        items.push(
+          ...[
+            ...scope.querySelectorAll(
+              '.el-select-dropdown__item, [role="option"], .el-scrollbar__view li, li'
+            ),
+          ].filter((el) => isVisible(el) && !(el.textContent || '').includes('กรุณาเลือก'))
+        );
+      }
       item = pickBestOption(items, value, step);
       if (!item && step.fallback_match_pattern) {
         item = pickBestOption(items, null, { ...step, match_pattern: step.fallback_match_pattern });
@@ -671,10 +694,64 @@
       if (item) break;
       await sleep(50);
     }
-    if (!item) return { ok: false, reason: 'option_not_found', tried_value: value };
+    if (!item) {
+      return {
+        ok: false,
+        reason: 'option_not_found',
+        field: step.field_hint,
+        tried_value: value,
+      };
+    }
+
+    // Element UI often needs mousedown before click.
+    try {
+      const view = item.ownerDocument && item.ownerDocument.defaultView;
+      if (view && view.MouseEvent) {
+        item.dispatchEvent(new view.MouseEvent('mousedown', { bubbles: true, cancelable: true, view }));
+        item.dispatchEvent(new view.MouseEvent('mouseup', { bubbles: true, cancelable: true, view }));
+      }
+    } catch (_) {
+      /* ignore */
+    }
     dispatchClick(item);
-    await sleep(150);
-    return { ok: true, matched: (item.textContent || '').trim() };
+
+    // Verify the field actually changed (don't false-ok).
+    const verifyUntil = Date.now() + 2500;
+    const needle = value != null ? String(value).trim() : '';
+    while (Date.now() < verifyUntil) {
+      const shown = (
+        (trigger.textContent || '') +
+        ' ' +
+        ((clickEl && (clickEl.value || clickEl.textContent)) || '')
+      ).replace(/\s+/g, ' ');
+      if (needle && (shown.includes(needle) || bankMatchNeedles(needle).some((n) => shown.includes(n)))) {
+        return { ok: true, matched: (item.textContent || '').trim() };
+      }
+      if (!needle && step.match_pattern) {
+        try {
+          if (new RegExp(step.match_pattern).test(shown.replace(/\s+/g, ''))) {
+            return { ok: true, matched: (item.textContent || '').trim() };
+          }
+        } catch (_) {
+          /* ignore */
+        }
+        // Numeric account: any long digit run in trigger means success.
+        if (/\d{8,}/.test(shown.replace(/\D/g, ''))) {
+          return { ok: true, matched: (item.textContent || '').trim() };
+        }
+      }
+      if (!shown.includes('กรุณาเลือก') && (item.textContent || '').trim() && shown.includes((item.textContent || '').trim().slice(0, 8))) {
+        return { ok: true, matched: (item.textContent || '').trim() };
+      }
+      await sleep(50);
+    }
+    return {
+      ok: false,
+      reason: 'option_not_applied',
+      field: step.field_hint,
+      tried_value: value,
+      hint: 'คลิกตัวเลือกแล้วแต่ฟอร์มไม่เปลี่ยน — มักเป็น dropdown Element UI',
+    };
   }
 
   function scrollIntoViewStep(step, context, doc) {

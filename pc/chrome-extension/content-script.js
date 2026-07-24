@@ -149,7 +149,11 @@ function showResultBanner(ok, detail) {
       } else if (!result.ok) {
         showResultBanner(
           false,
-          `ClipSync: ล้มเหลว ${result.reason || 'workflow_failed'} ขั้น ${result.failed_step ?? '-'} (จับ: ${usedKey})`
+          `ClipSync: ล้มเหลว ${result.reason || 'workflow_failed'} ขั้น ${result.failed_step ?? '-'} ` +
+            `${result.field ? '(' + result.field + ')' : ''} ` +
+            `${result.tried_value ? 'ค่า=' + result.tried_value : ''} ` +
+            `(จับ: ${usedKey})` +
+            `${result.hint ? ' — ' + result.hint : ''}`
         );
       } else {
         showResultBanner(true, `ClipSync: ยืนยันสำเร็จ (จับ: ${usedKey})`);
