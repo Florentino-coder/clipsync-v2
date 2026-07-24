@@ -703,6 +703,127 @@
     }
   }
 
+  /** Deduped Element UI option objects from the Vue Select instance (placeholder removed). */
+  function uniqueVueOptions(vue) {
+    const opts = [...((vue && vue.options) || []), ...((vue && vue.hoverOptions) || [])];
+    const seen = new Set();
+    const out = [];
+    for (const o of opts) {
+      const l = optionLabelOf(o);
+      if (!l || l.includes('กรุณาเลือก') || seen.has(l)) continue;
+      seen.add(l);
+      out.push(o);
+    }
+    return out;
+  }
+
+  function pickVueOption(list, value, step) {
+    const matchStep =
+      value == null && step.fallback_match_pattern
+        ? { ...step, match_pattern: step.fallback_match_pattern }
+        : step;
+    const matched = list.filter((o) => optionTextMatches(optionLabelOf(o), value, matchStep));
+    if (!matched.length) return null;
+    const want = String(value || '').trim();
+    const exact = matched.find((o) => optionLabelOf(o) === want);
+    if (exact) return exact;
+    matched.sort((a, b) => optionLabelOf(b).length - optionLabelOf(a).length);
+    return matched[0];
+  }
+
+  /**
+   * Element UI `.el-select` path — Vue instance ONLY. Never click/mousedown to open
+   * (that remounts/appends the el-option list, e.g. 4 banks → 8 duplicates on Jinbao).
+   * Selects while closed when options are already present; otherwise opens once (visible=true),
+   * waits, selects, closes. No soft-reopen, no click fallback.
+   */
+  async function selectElSelectViaVue(trigger, value, step) {
+    const vue = findVueInstance(trigger);
+    if (!vue || typeof vue.handleOptionSelect !== 'function') {
+      return { ok: false, reason: 'el_select_no_vue', field: step.field_hint };
+    }
+
+    // Start from a known-closed state so we never toggle-open a second time.
+    try {
+      if ('visible' in vue) vue.visible = false;
+    } catch (_) {
+      /* ignore */
+    }
+
+    let list = uniqueVueOptions(vue);
+    let match = pickVueOption(list, value, step);
+    let opened = false;
+
+    if (!match) {
+      // Options not populated yet — open exactly once to let Vue mount el-option children.
+      try {
+        if ('visible' in vue) {
+          vue.visible = true;
+          opened = true;
+        }
+      } catch (_) {
+        /* ignore */
+      }
+      const timeout = step.timeout_ms || 4000;
+      const start = Date.now();
+      while (Date.now() - start < timeout) {
+        list = uniqueVueOptions(vue);
+        match = pickVueOption(list, value, step);
+        if (match) break;
+        await sleep(50);
+      }
+    }
+
+    if (!match) {
+      if (opened) {
+        try {
+          vue.visible = false;
+        } catch (_) {
+          /* ignore */
+        }
+      }
+      return {
+        ok: false,
+        reason: 'option_not_found',
+        field: step.field_hint,
+        tried_value: value,
+        option_count: list.length,
+      };
+    }
+
+    const itemText = optionLabelOf(match);
+    try {
+      vue.handleOptionSelect(match);
+      if ('visible' in vue) vue.visible = false;
+    } catch (_) {
+      return {
+        ok: false,
+        reason: 'option_not_applied',
+        field: step.field_hint,
+        tried_value: value,
+        option_count: list.length,
+      };
+    }
+
+    const verifyUntil = Date.now() + 3000;
+    while (Date.now() < verifyUntil) {
+      const shown = readSelectDisplayValue(trigger);
+      if (displayMatchesSelection(shown, value, step, itemText)) {
+        return { ok: true, matched: itemText, via_vue: true, option_count: list.length };
+      }
+      await sleep(50);
+    }
+    return {
+      ok: false,
+      reason: 'option_not_applied',
+      field: step.field_hint,
+      tried_value: value,
+      shown: readSelectDisplayValue(trigger),
+      option_count: list.length,
+      hint: 'เลือกผ่าน Vue แล้วแต่ค่าไม่ติด — อย่าเปิด dropdown ซ้ำ',
+    };
+  }
+
   function clickOptionOnce(optionEl) {
     if (!optionEl) return false;
     // Single native click only — mousedown+click combo double-fires on some Element UI builds.
@@ -952,6 +1073,16 @@
     if (typeof trigger.scrollIntoView === 'function') {
       trigger.scrollIntoView({ block: 'center', inline: 'nearest' });
     }
+
+    // Element UI select: Vue-only, NEVER click to open (click duplicates the option list 4→8).
+    const isElSelect =
+      trigger.classList &&
+      (trigger.classList.contains('el-select') || trigger.classList.contains('el-select__wrapper'));
+    if (isElSelect) {
+      return selectElSelectViaVue(trigger, value, step);
+    }
+
+    // From here on: `.custom-dropdown` fixtures only — click path is safe for them.
     openElementUiSelect(trigger);
     await sleep(300);
 

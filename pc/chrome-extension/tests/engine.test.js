@@ -388,25 +388,42 @@ describe('Element UI select_option', () => {
     assert.equal(near.length, 2);
   });
 
-  it('rejects false success when dropdown list text leaks into trigger but input stays placeholder', async () => {
+  // Mock an Element UI Select Vue instance: options list + handleOptionSelect.
+  // `applyEffect` runs when an option is selected (or is a no-op to simulate a stuck select).
+  function mockElSelectVue(selectEl, labels, applyEffect) {
+    let visible = false;
+    const options = labels.map((label) => ({ currentLabel: label, label, value: label }));
+    selectEl.__vue__ = {
+      options,
+      hoverOptions: [],
+      get visible() {
+        return visible;
+      },
+      set visible(v) {
+        visible = v;
+      },
+      handleOptionSelect(opt) {
+        if (typeof applyEffect === 'function') applyEffect(opt);
+      },
+    };
+    return selectEl.__vue__;
+  }
+
+  it('rejects false success when Vue handleOptionSelect does not update the input (stays placeholder)', async () => {
     const dom = new JSDOM(`<!DOCTYPE html><body>
       <div class="el-dialog" role="dialog">
         <div class="el-form-item">
           <label class="el-form-item__label">ชื่อธนาคาร</label>
           <div class="el-select">
             <input class="el-input__inner" value="" placeholder="--- กรุณาเลือก ---" />
-            <div class="el-select-dropdown" style="display:block">
-              <ul>
-                <li class="el-select-dropdown__item">ธนาคารกรุงไทย</li>
-                <li class="el-select-dropdown__item">ธนาคารกสิกรไทย</li>
-              </ul>
-            </div>
           </div>
         </div>
       </div>
     </body>`);
     global.document = dom.window.document;
-    // Options are visible but clicking does not update the input (simulates Element UI no-op).
+    // Vue has the option but selecting it is a no-op (simulates Element UI not committing).
+    mockElSelectVue(document.querySelector('.el-select'), ['ธนาคารกรุงไทย', 'ธนาคารกสิกรไทย'], null);
+
     const result = await selectOption(
       {
         action: 'select_option',
@@ -423,7 +440,34 @@ describe('Element UI select_option', () => {
     assert.equal(readSelectDisplayValue(document.querySelector('.el-select')), '');
   });
 
-  it('applies bank option and verifies via input value only', async () => {
+  it('returns el_select_no_vue for an Element UI select with no Vue instance (never clicks)', async () => {
+    const dom = new JSDOM(`<!DOCTYPE html><body>
+      <div class="el-dialog" role="dialog">
+        <div class="el-form-item">
+          <label class="el-form-item__label">ชื่อธนาคาร</label>
+          <div class="el-select">
+            <input class="el-input__inner" value="" placeholder="--- กรุณาเลือก ---" />
+          </div>
+        </div>
+      </div>
+    </body>`);
+    global.document = dom.window.document;
+    const result = await selectOption(
+      {
+        action: 'select_option',
+        scope: 'popup',
+        field_hint: 'ชื่อธนาคาร',
+        match_text: 'ธนาคารกสิกรไทย',
+        timeout_ms: 300,
+      },
+      {},
+      document
+    );
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'el_select_no_vue');
+  });
+
+  it('applies bank option via Vue only and verifies via input value', async () => {
     const dom = new JSDOM(`<!DOCTYPE html><body>
       <div class="el-dialog" role="dialog">
         <div class="el-form-item">
@@ -439,32 +483,18 @@ describe('Element UI select_option', () => {
           </div>
         </div>
       </div>
-      <div class="el-select-dropdown el-popper" hidden id="bank-dd">
-        <ul>
-          <li class="el-select-dropdown__item">ธนาคารกรุงไทย</li>
-          <li class="el-select-dropdown__item">ธนาคารกสิกรไทย</li>
-        </ul>
-      </div>
-      <script>
-        (function () {
-          var sel = document.querySelector('.el-select');
-          var input = sel.querySelector('input');
-          var dd = document.getElementById('bank-dd');
-          sel.addEventListener('click', function () { dd.hidden = false; });
-          dd.querySelectorAll('li').forEach(function (li) {
-            li.addEventListener('click', function () {
-              input.value = li.textContent.trim();
-              input.removeAttribute('placeholder');
-              dd.hidden = true;
-              var acct = document.querySelectorAll('.el-select')[1];
-              acct.classList.remove('is-disabled');
-              acct.querySelector('input').disabled = false;
-            });
-          });
-        })();
-      </script>
-    </body>`, { runScripts: 'dangerously' });
+    </body>`);
     global.document = dom.window.document;
+
+    const bankSel = document.querySelectorAll('.el-select')[0];
+    const bankInput = bankSel.querySelector('input');
+    mockElSelectVue(bankSel, ['ธนาคารกรุงไทย', 'ธนาคารกสิกรไทย'], (opt) => {
+      bankInput.value = opt.currentLabel;
+      bankInput.removeAttribute('placeholder');
+      const acct = document.querySelectorAll('.el-select')[1];
+      acct.classList.remove('is-disabled');
+      acct.querySelector('input').disabled = false;
+    });
 
     const bank = await selectOption(
       {
@@ -478,8 +508,11 @@ describe('Element UI select_option', () => {
       document
     );
     assert.equal(bank.ok, true, JSON.stringify(bank));
+    assert.equal(bank.via_vue, true);
     assert.match(document.querySelector('.el-input__inner').value, /กสิกรไทย/);
 
+    // Account el-select now enabled but has a Vue with no numeric options yet.
+    mockElSelectVue(document.querySelectorAll('.el-select')[1], [], null);
     const acct = await selectOption(
       {
         action: 'select_option',
@@ -491,8 +524,42 @@ describe('Element UI select_option', () => {
       {},
       document
     );
-    // Account opens but has no numeric options yet — must not be select_control_not_found
+    // Account has no numeric options yet — must not be select_control_not_found / select_disabled.
     assert.notEqual(acct.reason, 'select_control_not_found');
     assert.notEqual(acct.reason, 'select_disabled');
+  });
+
+  it('refuses account step with bank_not_selected when bank still shows placeholder', async () => {
+    const dom = new JSDOM(`<!DOCTYPE html><body>
+      <div class="el-dialog" role="dialog">
+        <div class="el-form-item">
+          <label class="el-form-item__label">ชื่อธนาคาร</label>
+          <div class="el-select">
+            <input class="el-input__inner" value="" placeholder="--- กรุณาเลือก ---" />
+          </div>
+        </div>
+        <div class="el-form-item">
+          <label class="el-form-item__label">หมายเลขบัญชี</label>
+          <div class="el-select">
+            <input class="el-input__inner" value="" placeholder="--- กรุณาเลือก ---" />
+          </div>
+        </div>
+      </div>
+    </body>`);
+    global.document = dom.window.document;
+    mockElSelectVue(document.querySelectorAll('.el-select')[1], [], null);
+    const acct = await selectOption(
+      {
+        action: 'select_option',
+        scope: 'popup',
+        field_hint: 'หมายเลขบัญชี',
+        fallback_match_pattern: '^[0-9]{8,}$',
+        timeout_ms: 300,
+      },
+      {},
+      document
+    );
+    assert.equal(acct.ok, false);
+    assert.equal(acct.reason, 'bank_not_selected');
   });
 });
