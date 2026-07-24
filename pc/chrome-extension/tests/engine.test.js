@@ -613,9 +613,11 @@ describe('BootstrapVue native <select> close-job (real Jinbao structure)', () =>
           bank.addEventListener('change', function () {
             if (bank.value) {
               acct.disabled = false;
+              // First option is a decoy; correct one ends in 7476 (slip "จาก" account).
               acct.innerHTML =
                 '<option disabled value="">--- กรุณาเลือก ---</option>' +
-                '<option value="a1">2262610449</option>';
+                '<option value="a1">4251526900</option>' +
+                '<option value="a2">1234567476</option>';
             }
           });
         })();
@@ -652,14 +654,158 @@ describe('BootstrapVue native <select> close-job (real Jinbao structure)', () =>
         scope: 'popup',
         scope_text: 'โอนเงินทางบัญชี',
         field_hint: 'หมายเลขบัญชี',
-        fallback_match_pattern: '^[0-9]{8,}$',
+        value_from: 'slip.sender_account_last4',
         timeout_ms: 2000,
       },
-      {},
+      { slip: { sender_account_last4: '7476' } },
       document
     );
     assert.equal(acct.ok, true, JSON.stringify(acct));
-    assert.equal(document.getElementById('account').value, 'a1');
+    // Must pick the account ending 7476 (a2), NOT the first option (a1).
+    assert.equal(document.getElementById('account').value, 'a2');
+  });
+
+  it('refuses to guess when >1 account shares the same last 4 (account_ambiguous)', async () => {
+    const dom = makeDom();
+    global.document = dom.window.document;
+    await selectOption(
+      {
+        action: 'select_option',
+        scope: 'popup',
+        scope_text: 'โอนเงินทางบัญชี',
+        field_hint: 'ชื่อธนาคาร',
+        value_from: 'slip.bank_name_th',
+        timeout_ms: 2000,
+      },
+      { slip: { bank_name_th: 'ธนาคารไทยพาณิชย์' } },
+      document
+    );
+    const acct = document.getElementById('account');
+    // Second account also ends in 7476 → ambiguous, must not auto-pick.
+    acct.insertAdjacentHTML('beforeend', '<option value="a3">9999997476</option>');
+    const res = await selectOption(
+      {
+        action: 'select_option',
+        scope: 'popup',
+        scope_text: 'โอนเงินทางบัญชี',
+        field_hint: 'หมายเลขบัญชี',
+        value_from: 'slip.sender_account_last4',
+        timeout_ms: 1000,
+      },
+      { slip: { sender_account_last4: '7476' } },
+      document
+    );
+    assert.equal(res.ok, false, JSON.stringify(res));
+    assert.equal(res.reason, 'account_ambiguous', JSON.stringify(res));
+    // Must not have picked either of the ambiguous 7476 accounts.
+    assert.ok(acct.value !== 'a2' && acct.value !== 'a3', 'must not pick a 7476 account');
+  });
+
+  it('KBANK: masked template picks the position-correct account (last4 alone would fail)', async () => {
+    const dom = makeDom();
+    global.document = dom.window.document;
+    await selectOption(
+      {
+        action: 'select_option',
+        scope: 'popup',
+        scope_text: 'โอนเงินทางบัญชี',
+        field_hint: 'ชื่อธนาคาร',
+        value_from: 'slip.bank_name_th',
+        timeout_ms: 2000,
+      },
+      { slip: { bank_name_th: 'ธนาคารกสิกรไทย' } },
+      document
+    );
+    const acct = document.getElementById('account');
+    // Slip shows "xxx-x-x0758-x" → tail digit is masked. A naive last-4="0758"
+    // would wrongly match the decoy that literally ends in 0758.
+    acct.innerHTML =
+      '<option disabled value="">--- กรุณาเลือก ---</option>' +
+      '<option value="decoy">9999990758</option>' + // ends 0758 (last4 trap)
+      '<option value="real">1234507589</option>'; // 0758 then hidden 9
+    const res = await selectOption(
+      {
+        action: 'select_option',
+        scope: 'popup',
+        scope_text: 'โอนเงินทางบัญชี',
+        field_hint: 'หมายเลขบัญชี',
+        value_from_masked: 'slip.sender_account_masked',
+        value_from: 'slip.sender_account_last4',
+        timeout_ms: 1000,
+      },
+      { slip: { sender_account_masked: 'xxxxx0758x', sender_account_last4: '0758' } },
+      document
+    );
+    assert.equal(res.ok, true, JSON.stringify(res));
+    assert.equal(acct.value, 'real', 'mask template must beat the last-4 decoy');
+  });
+
+  it('BBL: matches with only 3 visible tail digits via mask prefix', async () => {
+    const dom = makeDom();
+    global.document = dom.window.document;
+    await selectOption(
+      {
+        action: 'select_option',
+        scope: 'popup',
+        scope_text: 'โอนเงินทางบัญชี',
+        field_hint: 'ชื่อธนาคาร',
+        value_from: 'slip.bank_name_th',
+        timeout_ms: 2000,
+      },
+      { slip: { bank_name_th: 'ธนาคารกสิกรไทย' } },
+      document
+    );
+    const acct = document.getElementById('account');
+    acct.innerHTML =
+      '<option disabled value="">--- กรุณาเลือก ---</option>' +
+      '<option value="decoy">0000000518</option>' + // ends 518 but wrong prefix
+      '<option value="real">5840123518</option>'; // 5840...518
+    const res = await selectOption(
+      {
+        action: 'select_option',
+        scope: 'popup',
+        scope_text: 'โอนเงินทางบัญชี',
+        field_hint: 'หมายเลขบัญชี',
+        value_from_masked: 'slip.sender_account_masked',
+        value_from: 'slip.sender_account_last4',
+        timeout_ms: 1000,
+      },
+      { slip: { sender_account_masked: '5840xxx518', sender_account_last4: '0518' } },
+      document
+    );
+    assert.equal(res.ok, true, JSON.stringify(res));
+    assert.equal(acct.value, 'real', 'mask prefix 5840...518 must select correctly');
+  });
+
+  it('matches account by last 4 even when slip provides a full account number', async () => {
+    const dom = makeDom();
+    global.document = dom.window.document;
+    await selectOption(
+      {
+        action: 'select_option',
+        scope: 'popup',
+        scope_text: 'โอนเงินทางบัญชี',
+        field_hint: 'ชื่อธนาคาร',
+        value_from: 'slip.bank_name_th',
+        timeout_ms: 2000,
+      },
+      { slip: { bank_name_th: 'ธนาคารกสิกรไทย' } },
+      document
+    );
+    const acct = await selectOption(
+      {
+        action: 'select_option',
+        scope: 'popup',
+        scope_text: 'โอนเงินทางบัญชี',
+        field_hint: 'หมายเลขบัญชี',
+        value_from: 'slip.sender_account',
+        timeout_ms: 2000,
+      },
+      { slip: { sender_account: 'xxx-xxx747-6' } },
+      document
+    );
+    assert.equal(acct.ok, true, JSON.stringify(acct));
+    assert.equal(document.getElementById('account').value, 'a2');
   });
 
   it('maps slip bank code SCB → ธนาคารไทยพาณิชย์', async () => {

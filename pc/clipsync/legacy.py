@@ -876,9 +876,12 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
                 "sender",
                 "sender_name",
                 "sender_account",
+                "sender_account_last4",
+                "sender_account_masked",
                 "receiver",
                 "receiver_account",
                 "receiver_account_last4",
+                "receiver_account_masked",
             )
             if event.get(k) is not None
         }
@@ -889,6 +892,28 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
             slip_payload["receiver_account_last4"] = event.get("receiverAccountLast4")
         if "sender_name" not in slip_payload and event.get("senderName"):
             slip_payload["sender_name"] = event.get("senderName")
+        # The external slip app forwards only the receiver account; the close-job
+        # form needs the payer ("จาก") account. Recover it by OCR'ing the slip
+        # image locally so we can auto-pick the correct rotating shop account.
+        if not slip_payload.get("sender_account_last4"):
+            thumb = event.get("thumbnail_jpeg_b64")
+            if isinstance(thumb, str) and thumb:
+                try:
+                    from clipsync.slip_image import decode_thumbnail_jpeg
+                    from clipsync.slip_ocr import extract_sender_account_last4
+
+                    raw_img = decode_thumbnail_jpeg(thumb)
+                    last4 = extract_sender_account_last4(raw_img) if raw_img else None
+                    if last4:
+                        slip_payload["sender_account_last4"] = last4
+                        self._append_log(f"Slip OCR: payer account last4 = {last4}")
+                    else:
+                        self._append_log(
+                            "Slip OCR: payer account not readable "
+                            "(Tesseract missing or image unclear)"
+                        )
+                except Exception as exc:  # pragma: no cover - defensive
+                    self._append_log(f"Slip OCR failed: {exc}")
         match_key = order_id or ref_number or amount
         record = {
             "event_id": event.get("event_id"),

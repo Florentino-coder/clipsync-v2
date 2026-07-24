@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:clipsync_app/slip/parsers/bank_parser.dart';
 import 'package:clipsync_app/slip/parsers/bbl_parser.dart';
 import 'package:clipsync_app/slip/parsers/kbank_parser.dart';
 import 'package:clipsync_app/slip/parsers/parser_registry.dart';
@@ -50,6 +51,27 @@ void main() {
 
       expect(parsed.valid, isFalse);
       expect(parsed.errors, isNotEmpty);
+    });
+
+    test('extracts payer (จาก) + payee (ไปยัง) last4 by position', () {
+      final raw = File('test/fixtures/scb_from_to_01.txt').readAsStringSync();
+      final parsed = ScbParser().parse(raw);
+
+      expect(parsed.valid, isTrue);
+      // Payer "xxx-xxx747-6" (dash inside digits) → 7476; this is the shop
+      // payout account the close-job form needs.
+      expect(parsed.senderAccountLast4, '7476');
+      // Payee "x-4106" → 4106 (member account, listed last).
+      expect(parsed.receiverAccountLast4, '4106');
+    });
+
+    test('sender is null when only one masked account is present', () {
+      final parsed = ScbParser().parse(
+        'SCB\nจำนวน 100.00\nรหัสอ้างอิง 202607221432001\nx6789',
+      );
+
+      expect(parsed.receiverAccountLast4, '6789');
+      expect(parsed.senderAccountLast4, isNull);
     });
 
     test('normalizes OCR confusion O→0 and l/I→1 in ref', () {
@@ -113,6 +135,43 @@ void main() {
       expect(BblParser().matches('Bangkok Bank slip'), isTrue);
       expect(BblParser().matches('ธนาคารกรุงเทพ'), isTrue);
       expect(BblParser().matches('random text'), isFalse);
+    });
+  });
+
+  group('Real slip masked accounts (5 banks)', () {
+    ParsedSlip parseFixture(String name) => parseSlipFields(
+          File('test/fixtures/$name').readAsStringSync(),
+          minRefLength: 6,
+          maxRefLength: 40,
+        );
+
+    test('KBANK K+ — tail digit masked (xxx-x-x0758-x)', () {
+      final p = parseFixture('kbank_kplus_real.txt');
+      // Payer template keeps the hidden tail position so the PC can match.
+      expect(p.senderAccountMasked, 'xxxxx0758x');
+      expect(p.receiverAccountMasked, 'xxxxx0860x');
+      expect(p.senderAccountLast4, '0758');
+    });
+
+    test('Krungthai — XXX-X-XX994-3', () {
+      final p = parseFixture('ktb_real.txt');
+      expect(p.senderAccountMasked, 'xxxxxx9943');
+      expect(p.receiverAccountMasked, 'xxxxxx8591');
+      expect(p.senderAccountLast4, '9943');
+    });
+
+    test('GSB mymo — leading digits visible (0203xxxx7778)', () {
+      final p = parseFixture('gsb_mymo_real.txt');
+      expect(p.senderAccountMasked, '0203xxxx7778');
+      expect(p.receiverAccountMasked, '01xxxx2850');
+      expect(p.senderAccountLast4, '7778');
+    });
+
+    test('BBL — only 3 visible tail digits (584-0-xxx518)', () {
+      final p = parseFixture('bbl_real.txt');
+      // Previously dropped (only 3 tail digits); now captured with prefix.
+      expect(p.senderAccountMasked, '5840xxx518');
+      expect(p.receiverAccountMasked, '0170xxx850');
     });
   });
 

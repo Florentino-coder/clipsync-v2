@@ -83,6 +83,21 @@ function showResultBanner(ok, detail) {
       out.receiver_account_last4 = out.receiverAccountLast4;
     }
     if (!out.sender_name && out.senderName) out.sender_name = out.senderName;
+    // Shop payout account = the slip's "จาก/from" account. Expose its last-4 for the
+    // หมายเลขบัญชี dropdown match (e.g. SCB "xxx-xxx747-6" → 7476).
+    const last4 = (v) => {
+      const d = String(v == null ? '' : v).replace(/\D/g, '');
+      return d.length >= 4 ? d.slice(-4) : '';
+    };
+    if (!out.sender_account_last4) {
+      out.sender_account_last4 =
+        last4(out.senderAccountLast4) ||
+        last4(out.sender_account) ||
+        last4(out.senderAccount) ||
+        last4(out.from_account) ||
+        last4(out.fromAccount) ||
+        '';
+    }
     return out;
   }
 
@@ -147,6 +162,22 @@ function showResultBanner(ok, detail) {
       if (result.reason === 'dry_run') {
         showDryRunBanner(usedKey);
       } else if (!result.ok) {
+        // On account-field failures, surface the slip fields we actually received so we
+        // can see which key (if any) carries the payer account number.
+        let slipDiag = '';
+        if (
+          (result.reason === 'missing_select_value' ||
+            result.reason === 'option_not_found' ||
+            result.reason === 'bank_not_selected') &&
+          String(result.field || '').includes('บัญชี')
+        ) {
+          const shown = {};
+          for (const k of Object.keys(slip)) {
+            if (k === 'thumbnail_jpeg_b64') continue;
+            shown[k] = slip[k];
+          }
+          slipDiag = ' — slip=' + JSON.stringify(shown);
+        }
         showResultBanner(
           false,
           `ClipSync: ล้มเหลว ${result.reason || 'workflow_failed'} ขั้น ${result.failed_step ?? '-'} ` +
@@ -154,7 +185,8 @@ function showResultBanner(ok, detail) {
             `${result.tried_value ? 'ค่า=' + result.tried_value : ''} ` +
             `(จับ: ${usedKey})` +
             `${result.hint ? ' — ' + result.hint : ''}` +
-            ` [ext ${chrome.runtime.getManifest().version}]`
+            ` [ext ${chrome.runtime.getManifest().version}]` +
+            slipDiag
         );
       } else {
         showResultBanner(true, `ClipSync: ยืนยันสำเร็จ (จับ: ${usedKey})`);

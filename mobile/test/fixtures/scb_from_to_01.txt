@@ -1,0 +1,12 @@
+# Synthetic SCB slip with BOTH payer (จาก) and payee (ไปยัง) masked accounts.
+# Payer is listed first, payee last — mirrors the real SCB Easy layout.
+SCB Easy
+ไทยพาณิชย์
+Siam Commercial Bank
+โอนเงินสำเร็จ
+จำนวน: 1,067.00 บาท
+รหัสอ้างอิง: 202607241234567890
+จาก นางสาว อังคณี ฉ.
+xxx-xxx747-6
+ไปยัง นางสาว ศศิภา เสาว์ศรี
+x-4106

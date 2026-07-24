@@ -483,11 +483,15 @@
       paths.push('slip.bank_name_th', 'slip.bank_name', 'slip.bank');
     }
     if (from.includes('account')) {
+      // Payout-account field = which shop account SENT the money (slip "จาก"/sender).
+      // Never fall back to receiver_* — that is the member account and is not in the
+      // shop dropdown; picking it could select the wrong payout account.
       paths.push(
-        'slip.account_number',
+        'slip.sender_account_last4',
+        'slip.senderAccountLast4',
         'slip.sender_account',
-        'slip.receiver_account',
-        'slip.receiver_account_last4'
+        'slip.from_account',
+        'slip.account_number'
       );
     }
     for (const p of paths) {
@@ -495,6 +499,57 @@
       if (v != null && String(v).trim() !== '') return v;
     }
     return step.match_text || null;
+  }
+
+  /**
+   * Resolve a normalized masked-account template for a payout-account field, e.g.
+   * "5840xxx518" (BBL) or "xxxxx0758x" (KBANK where the tail digit is hidden).
+   * The slip's last-4 alone is unreliable across banks because each masks a
+   * different position — the full template preserves every visible digit AND the
+   * hidden positions, so we can build a position-aware matcher on the dropdown.
+   * Only the payer/sender template is considered: on a payout the shop is always
+   * the sender, and receiver_* is the member account (not in the shop dropdown).
+   */
+  function resolveMaskedTemplate(step, context) {
+    const paths = [];
+    if (step.value_from_masked) paths.push(step.value_from_masked);
+    paths.push('slip.sender_account_masked', 'slip.senderAccountMasked');
+    for (const p of paths) {
+      const v = resolvePath(context, p);
+      if (v != null && /[xX]/.test(String(v)) && String(v).trim() !== '') {
+        return String(v).trim();
+      }
+    }
+    return null;
+  }
+
+  /** Turn "5840xxx518" into /5840\d\d\d518$/ — masks become "any digit". */
+  function maskTemplateToRegex(template) {
+    const body = String(template)
+      .replace(/[^0-9xX]/g, '')
+      .split('')
+      .map((c) => (c === 'x' || c === 'X' ? '\\d' : c))
+      .join('');
+    if (!body || !/\d/.test(body.replace(/\\d/g, ''))) {
+      // Require at least one real (literal) digit so an all-mask template can't
+      // match everything.
+      return null;
+    }
+    try {
+      return new RegExp(body + '$');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /** Native <option>s whose account digits are consistent with the mask template. */
+  function matchMaskedOptions(select, template) {
+    const re = maskTemplateToRegex(template);
+    if (!re) return [];
+    return [...select.options].filter((o) => {
+      const digits = String(o.textContent || o.value || '').replace(/\D/g, '');
+      return digits.length >= 4 && re.test(digits);
+    });
   }
 
   function pickBestOption(items, value, step) {
@@ -1021,17 +1076,31 @@
     return (opt.textContent || '').includes('กรุณาเลือก');
   }
 
-  function matchNativeOption(select, value, step) {
-    let opt = [...select.options].find((o) => optionTextMatches(o.textContent || o.value, value, step));
-    if (!opt && step.fallback_match_pattern) {
-      opt = [...select.options].find((o) =>
+  function matchNativeOptionsAll(select, value, step) {
+    // Position-aware mask match wins when the slip carried a masked template —
+    // it uses every visible digit (not just the last 4), so it works even when
+    // the bank hides the tail (KBANK) or shows only 3 digits (BBL).
+    if (step._masked_template) {
+      const maskedMatches = matchMaskedOptions(select, step._masked_template);
+      if (maskedMatches.length) return maskedMatches;
+      // Nothing matched the template → fall through to the last-4 heuristic.
+    }
+    let opts = [...select.options].filter((o) =>
+      optionTextMatches(o.textContent || o.value, value, step)
+    );
+    if (!opts.length && step.fallback_match_pattern) {
+      opts = [...select.options].filter((o) =>
         optionTextMatches(o.textContent || o.value, null, {
           ...step,
           match_pattern: step.fallback_match_pattern,
         })
       );
     }
-    return opt || null;
+    return opts;
+  }
+
+  function matchNativeOption(select, value, step) {
+    return matchNativeOptionsAll(select, value, step)[0] || null;
   }
 
   /**
@@ -1055,12 +1124,12 @@
 
     const timeout = step.timeout_ms || 6000;
     const start = Date.now();
-    let opt = matchNativeOption(select, value, step);
-    while (!opt && Date.now() - start < timeout) {
+    let matches = matchNativeOptionsAll(select, value, step);
+    while (!matches.length && Date.now() - start < timeout) {
       await sleep(120);
-      opt = matchNativeOption(select, value, step);
+      matches = matchNativeOptionsAll(select, value, step);
     }
-    if (!opt) {
+    if (!matches.length) {
       return {
         ok: false,
         reason: 'option_not_found',
@@ -1070,6 +1139,19 @@
         disabled: Boolean(select.disabled),
       };
     }
+    // Safety for account matching: an OCR-read last-4 must map to exactly ONE
+    // shop account. If several accounts share the same last-4, refuse to guess.
+    if (isAccount && matches.length > 1) {
+      return {
+        ok: false,
+        reason: 'account_ambiguous',
+        field: step.field_hint,
+        tried_value: value,
+        option_count: matches.length,
+        hint: 'มีหลายบัญชีลงท้ายเลขเดียวกัน — เลือกเองเพื่อความปลอดภัย',
+      };
+    }
+    const opt = matches[0];
 
     setNativeSelectValue(select, opt.value);
 
@@ -1109,12 +1191,27 @@
         }
       }
     }
-    if ((value == null || String(value).trim() === '') && !step.match_pattern) {
+    // Account fields: prefer a position-aware mask template (works across banks),
+    // and keep the last-4 as a fallback value for banks that show the full tail.
+    if (step.field_hint && String(step.field_hint).includes('บัญชี')) {
+      const template = resolveMaskedTemplate(step, context);
+      if (template) step = { ...step, _masked_template: template };
+      if (value != null) {
+        const digits = String(value).replace(/\D/g, '');
+        if (digits.length >= 4) value = digits.slice(-4);
+      }
+    }
+
+    if (
+      (value == null || String(value).trim() === '') &&
+      !step.match_pattern &&
+      !step._masked_template
+    ) {
       if (step.fallback_match_pattern) {
         step = { ...step, match_pattern: step.fallback_match_pattern };
         value = null;
       } else {
-        return { ok: false, reason: 'missing_select_value' };
+        return { ok: false, reason: 'missing_select_value', field: step.field_hint };
       }
     }
 

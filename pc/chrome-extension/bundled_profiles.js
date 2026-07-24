@@ -111,29 +111,28 @@ const BUNDLED_SITE_PROFILES = [
         "scope": "popup",
         "scope_text": "โอนเงินทางบัญชี",
         "field_hint": "หมายเลขบัญชี",
-        "fallback_match_pattern": "^[0-9]{8,}$",
+        "value_from_masked": "slip.sender_account_masked",
+        "value_from": "slip.sender_account_last4",
+        "value_from_fallbacks": [
+          "slip.senderAccountLast4",
+          "slip.sender_account",
+          "slip.from_account_last4",
+          "slip.from_account"
+        ],
         "timeout_ms": 10000
       },
       {
         "action": "click",
-        "scope": "popup",
-        "scope_text": "โอนเงินทางบัญชี",
         "match_text": "บันทึก"
       },
       {
         "action": "wait_for",
-        "selector_hints": [
-          ".el-message-box",
-          ".el-dialog",
-          "[class*='message-box']",
-          "[role='dialog']"
-        ],
+        "match_text": "ยืนยัน|ต้องการบันทึก|ตกลง|สำเร็จ",
         "timeout_ms": 8000
       },
       {
         "action": "click",
-        "scope": "popup",
-        "match_text": "ตกลง"
+        "match_text": "ตกลง|ยืนยัน|confirm"
       },
       {
         "action": "verify_result",
@@ -148,7 +147,7 @@ const BUNDLED_SITE_PROFILES = [
     "_notes": [
       "Target page: https://manage.jinbao356.com/withdraw/transaction",
       "Close-job form is below the fold in the withdrawal modal — scroll_into_view first.",
-      "Shop payout account is selected by first numeric หมายเลขบัญชี option after bank.",
+      "Shop payout account is matched by the slip 'จาก' (sender) account. Prefer the position-aware mask template (sender_account_masked) which works across banks that hide the tail (KBANK) or show few digits (BBL); sender_account_last4 is a fallback.",
       "Keep dry_run true until live clicks are verified end-to-end."
     ]
   }
