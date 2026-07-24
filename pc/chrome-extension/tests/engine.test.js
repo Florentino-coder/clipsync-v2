@@ -23,6 +23,7 @@ const {
   collectVisibleSelectOptions,
   collectOptionsForTrigger,
   readSelectDisplayValue,
+  findStepTarget,
 } = require('../engine.js');
 
 const ORDER_FIXTURE = path.join(__dirname, '..', 'fixtures', 'order_list.html');
@@ -905,5 +906,35 @@ describe('BootstrapVue native <select> close-job (real Jinbao structure)', () =>
     );
     assert.equal(res.ok, true, JSON.stringify(res));
     assert.equal(document.getElementById('status').value, 'success');
+  });
+});
+
+describe('click บันทึก when multiple matches exist', () => {
+  it('picks the modal footer Save button, not a page-level duplicate', () => {
+    const dom = new JSDOM(`<!doctype html><body>
+      <header><button type="button">บันทึกตัวกรอง</button></header>
+      <div class="modal" role="dialog">
+        <div>โอนเงินทางบัญชี</div>
+        <div class="modal-footer">
+          <button type="button" class="btn">ยกเลิก</button>
+          <button type="button" class="btn btn-primary" id="save-real">บันทึก</button>
+        </div>
+      </div>
+      <button type="button">บันทึก</button>
+    </body>`);
+    global.document = dom.window.document;
+    const target = findStepTarget(
+      {
+        action: 'click',
+        scope: 'popup',
+        match_text: 'บันทึก',
+        nth_fallback: 'last',
+        selector_hints: ['button.btn-primary', 'button.btn', 'button'],
+      },
+      {},
+      document
+    );
+    assert.ok(target, 'must find a Save button');
+    assert.equal(target.id, 'save-real');
   });
 });

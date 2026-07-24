@@ -122,17 +122,39 @@ const BUNDLED_SITE_PROFILES = [
         "timeout_ms": 10000
       },
       {
+        "action": "scroll_into_view",
+        "scope": "popup",
+        "match_text": "บันทึก|ยกเลิก"
+      },
+      {
         "action": "click",
-        "match_text": "บันทึก"
+        "scope": "popup",
+        "match_text": "บันทึก",
+        "nth_fallback": "last",
+        "selector_hints": [
+          "button.btn-primary",
+          "button.btn",
+          "button",
+          "input[type='submit']",
+          "a.btn"
+        ]
       },
       {
         "action": "wait_for",
-        "match_text": "ยืนยัน|ต้องการบันทึก|ตกลง|สำเร็จ",
+        "match_text": "ยืนยัน|ต้องการบันทึก|ตกลง",
         "timeout_ms": 8000
       },
       {
         "action": "click",
-        "match_text": "ตกลง|ยืนยัน|confirm"
+        "match_text": "ตกลง|ยืนยัน|confirm",
+        "nth_fallback": "last",
+        "selector_hints": [
+          "button.btn-primary",
+          ".el-message-box__btns button",
+          "button.btn",
+          "button",
+          "a.btn"
+        ]
       },
       {
         "action": "verify_result",

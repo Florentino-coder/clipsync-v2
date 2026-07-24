@@ -1038,6 +1038,53 @@
     return null;
   }
 
+  /** Prefer a real, visible primary control when several nodes share the same label. */
+  function pickClickTarget(candidates, step) {
+    let list = (candidates || []).filter(Boolean);
+    if (step && step.match_text) {
+      list = list.filter((el) => textMatches(el, step.match_text));
+    }
+    if (!list.length) return null;
+
+    const visible = list.filter((el) => {
+      try {
+        return typeof isVisible === 'function' ? isVisible(el) : true;
+      } catch (_) {
+        return true;
+      }
+    });
+    if (visible.length) list = visible;
+
+    const pattern = String((step && step.match_text) || '');
+    const alts = pattern.includes('|') ? pattern.split('|') : [pattern];
+    const exact = list.filter((el) => {
+      const t = String(el.textContent || el.value || '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      return alts.some((a) => t.toLowerCase() === String(a).trim().toLowerCase());
+    });
+    if (exact.length) list = exact;
+
+    const buttons = list.filter((el) => {
+      const tag = (el.tagName || '').toLowerCase();
+      return (
+        tag === 'button' ||
+        tag === 'a' ||
+        (tag === 'input' && /submit|button/i.test(el.type || '')) ||
+        el.getAttribute('role') === 'button'
+      );
+    });
+    if (buttons.length) list = buttons;
+
+    if (list.length === 1) return list[0];
+    if (step && (step.nth_fallback === 'last' || (step.target && step.target.nth_fallback === 'last'))) {
+      return list[list.length - 1];
+    }
+    // Footer Save/Confirm: when still ambiguous, prefer the last visible button
+    // (Jinbao puts ยกเลิก then บันทึก).
+    return list[list.length - 1];
+  }
+
   function findStepTarget(step, context, doc) {
     const root = findScopeRoot(step, context, doc);
     const hints = step.selector_hints || (step.target && step.target.selector_hints) || [];
@@ -1053,17 +1100,29 @@
       }
     }
 
-    if (step.match_text && candidates.length === 0) {
-      // Prefer controls over ancestor containers (div/span textContent includes children).
+    const textSearch = () => {
       const interactive = [
         ...root.querySelectorAll("button, a, a[role='button'], input[type='submit'], [onclick], li, option"),
       ].filter((el) => textMatches(el, step.match_text));
-      candidates =
-        interactive.length > 0
-          ? interactive
-          : [...root.querySelectorAll('span, div')].filter((el) => textMatches(el, step.match_text));
+      if (interactive.length > 0) return interactive;
+      return [...root.querySelectorAll('span, div')].filter((el) => textMatches(el, step.match_text));
+    };
+
+    if (step.match_text) {
+      if (candidates.length === 0) {
+        candidates = textSearch();
+      } else {
+        // Hints may match many buttons — keep only those whose label matches.
+        const narrowed = candidates.filter((el) => textMatches(el, step.match_text));
+        candidates = narrowed.length ? narrowed : textSearch();
+      }
     }
 
+    // Click steps must never return null just because >1 node matched the label
+    // (common: page header + modal footer both contain "บันทึก").
+    if (step.action === 'click' || (!step.action && step.match_text)) {
+      return pickClickTarget(candidates, step);
+    }
     return pickTarget(candidates, step);
   }
 
@@ -1574,6 +1633,13 @@
           };
         }
         if (!target) return { ok: false, reason: 'click_target_not_found' };
+        try {
+          if (typeof target.scrollIntoView === 'function') {
+            target.scrollIntoView({ block: 'center', inline: 'nearest' });
+          }
+        } catch (_) {
+          /* ignore */
+        }
         if (dryRun && options.outline_clicks) outlineButton(clickableTarget(target), document);
         else if (!dispatchClick(target)) return { ok: false, reason: 'click_failed' };
         return { ok: true };
@@ -1730,6 +1796,7 @@
     runWorkflow,
     runWorkflowStep,
     selectOption,
+    findStepTarget,
     collectVisibleSelectOptions,
     collectOptionsForTrigger,
     readSelectDisplayValue,
