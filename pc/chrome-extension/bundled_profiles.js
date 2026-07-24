@@ -100,7 +100,7 @@ const BUNDLED_SITE_PROFILES = [
       {
         "action": "wait_for",
         "scope": "popup",
-        "match_text": "ธนาคารไทยพาณิชย์|ธนาคารกสิกรไทย|ธนาคารกรุงไทย|ธนาคารออมสิน|ธนาคารกรุงเทพ|ธนาคารทหารไทย",
+        "match_text": "หมายเลขบัญชี",
         "timeout_ms": 5000
       },
       {

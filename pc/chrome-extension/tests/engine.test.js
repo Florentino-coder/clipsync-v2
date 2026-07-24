@@ -19,6 +19,9 @@ const {
   scrapePendingOrders,
   apiAdapter,
   runWorkflow,
+  selectOption,
+  collectVisibleSelectOptions,
+  readSelectDisplayValue,
 } = require('../engine.js');
 
 const ORDER_FIXTURE = path.join(__dirname, '..', 'fixtures', 'order_list.html');
@@ -318,5 +321,146 @@ describe('runWorkflow', () => {
     assert.equal(result.ok, false);
     assert.equal(result.failed_step, 4);
     assert.equal(result.reason, 'pending_review');
+  });
+});
+
+describe('Element UI select_option', () => {
+  it('does not double-count options from nested el-popper + el-select-dropdown', () => {
+    const dom = new JSDOM(`<!DOCTYPE html><body>
+      <div class="el-dialog" role="dialog">
+        <div class="el-form-item">
+          <label class="el-form-item__label">ชื่อธนาคาร</label>
+          <div class="el-select"><input class="el-input__inner" value="" placeholder="--- กรุณาเลือก ---" /></div>
+        </div>
+      </div>
+      <div class="el-popper" style="display:block">
+        <div class="el-select-dropdown el-popper" style="display:block">
+          <ul class="el-scrollbar__view">
+            <li class="el-select-dropdown__item">ธนาคารกรุงไทย</li>
+            <li class="el-select-dropdown__item">ธนาคารออมสิน</li>
+            <li class="el-select-dropdown__item">ธนาคารกสิกรไทย</li>
+            <li class="el-select-dropdown__item">ธนาคารไทยพาณิชย์</li>
+          </ul>
+        </div>
+      </div>
+    </body>`);
+    global.document = dom.window.document;
+    const items = collectVisibleSelectOptions(document);
+    const labels = items.map((el) => (el.textContent || '').trim());
+    assert.equal(labels.length, 4, `expected 4 unique options, got ${labels.length}: ${labels.join('|')}`);
+    assert.deepEqual(labels, [
+      'ธนาคารกรุงไทย',
+      'ธนาคารออมสิน',
+      'ธนาคารกสิกรไทย',
+      'ธนาคารไทยพาณิชย์',
+    ]);
+  });
+
+  it('rejects false success when dropdown list text leaks into trigger but input stays placeholder', async () => {
+    const dom = new JSDOM(`<!DOCTYPE html><body>
+      <div class="el-dialog" role="dialog">
+        <div class="el-form-item">
+          <label class="el-form-item__label">ชื่อธนาคาร</label>
+          <div class="el-select">
+            <input class="el-input__inner" value="" placeholder="--- กรุณาเลือก ---" />
+            <div class="el-select-dropdown" style="display:block">
+              <ul>
+                <li class="el-select-dropdown__item">ธนาคารกรุงไทย</li>
+                <li class="el-select-dropdown__item">ธนาคารกสิกรไทย</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    </body>`);
+    global.document = dom.window.document;
+    // Options are visible but clicking does not update the input (simulates Element UI no-op).
+    const result = await selectOption(
+      {
+        action: 'select_option',
+        scope: 'popup',
+        field_hint: 'ชื่อธนาคาร',
+        match_text: 'ธนาคารกสิกรไทย',
+        timeout_ms: 400,
+      },
+      {},
+      document
+    );
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'option_not_applied');
+    assert.equal(readSelectDisplayValue(document.querySelector('.el-select')), '');
+  });
+
+  it('applies bank option and verifies via input value only', async () => {
+    const dom = new JSDOM(`<!DOCTYPE html><body>
+      <div class="el-dialog" role="dialog">
+        <div class="el-form-item">
+          <label class="el-form-item__label">ชื่อธนาคาร</label>
+          <div class="el-select">
+            <input class="el-input__inner" value="" placeholder="--- กรุณาเลือก ---" />
+          </div>
+        </div>
+        <div class="el-form-item">
+          <label class="el-form-item__label">หมายเลขบัญชี</label>
+          <div class="el-select is-disabled">
+            <input class="el-input__inner" disabled value="" placeholder="--- กรุณาเลือก ---" />
+          </div>
+        </div>
+      </div>
+      <div class="el-select-dropdown el-popper" hidden id="bank-dd">
+        <ul>
+          <li class="el-select-dropdown__item">ธนาคารกรุงไทย</li>
+          <li class="el-select-dropdown__item">ธนาคารกสิกรไทย</li>
+        </ul>
+      </div>
+      <script>
+        (function () {
+          var sel = document.querySelector('.el-select');
+          var input = sel.querySelector('input');
+          var dd = document.getElementById('bank-dd');
+          sel.addEventListener('click', function () { dd.hidden = false; });
+          dd.querySelectorAll('li').forEach(function (li) {
+            li.addEventListener('click', function () {
+              input.value = li.textContent.trim();
+              input.removeAttribute('placeholder');
+              dd.hidden = true;
+              var acct = document.querySelectorAll('.el-select')[1];
+              acct.classList.remove('is-disabled');
+              acct.querySelector('input').disabled = false;
+            });
+          });
+        })();
+      </script>
+    </body>`, { runScripts: 'dangerously' });
+    global.document = dom.window.document;
+
+    const bank = await selectOption(
+      {
+        action: 'select_option',
+        scope: 'popup',
+        field_hint: 'ชื่อธนาคาร',
+        match_text: 'ธนาคารกสิกรไทย',
+        timeout_ms: 2000,
+      },
+      {},
+      document
+    );
+    assert.equal(bank.ok, true, JSON.stringify(bank));
+    assert.match(document.querySelector('.el-input__inner').value, /กสิกรไทย/);
+
+    const acct = await selectOption(
+      {
+        action: 'select_option',
+        scope: 'popup',
+        field_hint: 'หมายเลขบัญชี',
+        fallback_match_pattern: '^[0-9]{8,}$',
+        timeout_ms: 500,
+      },
+      {},
+      document
+    );
+    // Account opens but has no numeric options yet — must not be select_control_not_found
+    assert.notEqual(acct.reason, 'select_control_not_found');
+    assert.notEqual(acct.reason, 'select_disabled');
   });
 });

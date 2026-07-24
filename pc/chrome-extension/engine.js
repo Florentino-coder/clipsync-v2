@@ -486,13 +486,27 @@
     return matched[0];
   }
 
+  /** Prefer real form rows that contain a select control (avoid member-info labels). */
   function findFieldContainer(root, fieldHint) {
     if (!root || !fieldHint) return null;
-    const labeled = [...root.querySelectorAll('.el-form-item, .form-group, label, div')];
+    const formItems = [...root.querySelectorAll('.el-form-item, .form-group')];
+    for (const el of formItems) {
+      const labelEl = el.querySelector('.el-form-item__label, label, .control-label');
+      const labelText = labelEl ? labelEl.textContent || '' : '';
+      if (!labelText.includes(fieldHint) || labelText.length >= 80) continue;
+      if (el.querySelector('.el-select, .el-select__wrapper, select, .custom-dropdown, input, textarea')) {
+        return el;
+      }
+    }
+    for (const el of formItems) {
+      const labelEl = el.querySelector('.el-form-item__label, label, .control-label');
+      const labelText = labelEl ? labelEl.textContent || '' : '';
+      if (labelText.includes(fieldHint) && labelText.length < 80) return el;
+    }
+    const labeled = [...root.querySelectorAll('label, div')];
     for (const el of labeled) {
       const labelEl = el.querySelector('.el-form-item__label, label, .control-label');
       const labelText = labelEl ? labelEl.textContent || '' : '';
-      // Prefer short label text over giant containers.
       if (labelText.includes(fieldHint) && labelText.length < 80) return el;
     }
     for (const el of labeled) {
@@ -500,6 +514,92 @@
       if (own.includes(fieldHint) && own.length < 80) return el;
     }
     return null;
+  }
+
+  /**
+   * Visible Element UI / custom dropdown panels, leaf-only.
+   * Do NOT include bare `.el-popper` — it nests `.el-select-dropdown` and doubles every option.
+   */
+  function leafVisibleDropdowns(doc) {
+    const document = getDocument(doc);
+    if (!document) return [];
+    const found = [...document.querySelectorAll('.el-select-dropdown, .dropdown-menu')].filter((el) =>
+      isVisible(el)
+    );
+    // Keep only leaves: drop a panel that contains another matched panel.
+    return found.filter((el) => !found.some((other) => other !== el && el.contains(other)));
+  }
+
+  function collectVisibleSelectOptions(doc) {
+    const scopes = leafVisibleDropdowns(doc);
+    const items = [];
+    for (const scope of scopes) {
+      items.push(
+        ...[
+          ...scope.querySelectorAll(
+            '.el-select-dropdown__item, [role="option"], .el-scrollbar__view li, li'
+          ),
+        ].filter((el) => isVisible(el) && !(el.textContent || '').includes('กรุณาเลือก'))
+      );
+    }
+    return [...new Set(items)];
+  }
+
+  /** Displayed value of an Element UI / native-ish select — never full trigger textContent. */
+  function readSelectDisplayValue(trigger) {
+    if (!trigger) return '';
+    const input =
+      trigger.querySelector &&
+      trigger.querySelector('.el-input__inner, input.el-select__input, input:not([type="hidden"])');
+    if (input) {
+      const v = String(input.value || '').trim();
+      if (v) return v;
+      const ph = String(input.getAttribute('placeholder') || '').trim();
+      if (ph && ph.includes('กรุณาเลือก')) return '';
+    }
+    const selected =
+      trigger.querySelector &&
+      trigger.querySelector('.el-select__selected-item span, .el-select__selected-item');
+    if (selected) {
+      const t = String(selected.textContent || '').trim();
+      if (t && !t.includes('กรุณาเลือก')) return t;
+    }
+    // Custom / fixture dropdowns use a toggle button as the display.
+    const toggle =
+      trigger.querySelector && trigger.querySelector('.dropdown-toggle, button.dropdown-toggle');
+    if (toggle) {
+      const t = String(toggle.textContent || '').trim();
+      if (t && !/กรุณาเลือก|เลือกธนาคาร|select/i.test(t)) return t;
+      return '';
+    }
+    const placeholder =
+      trigger.querySelector && trigger.querySelector('.el-select__placeholder, .el-input__inner');
+    if (placeholder) {
+      const t = String(placeholder.textContent || placeholder.value || '').trim();
+      if (t && !t.includes('กรุณาเลือก')) return t;
+      return '';
+    }
+    return '';
+  }
+
+  function displayMatchesSelection(shown, value, step, itemText) {
+    const text = String(shown || '').replace(/\s+/g, ' ').trim();
+    if (!text || text.includes('กรุณาเลือก')) return false;
+    const needle = value != null ? String(value).trim() : '';
+    if (needle && (text.includes(needle) || bankMatchNeedles(needle).some((n) => text.includes(n)))) {
+      return true;
+    }
+    if (!needle && step && step.match_pattern) {
+      try {
+        if (new RegExp(step.match_pattern).test(text.replace(/\s+/g, ''))) return true;
+      } catch (_) {
+        /* ignore */
+      }
+      if (/\d{8,}/.test(text.replace(/\D/g, ''))) return true;
+    }
+    const slice = String(itemText || '').trim().slice(0, 8);
+    if (slice && text.includes(slice)) return true;
+    return false;
   }
 
   function textMatches(el, pattern) {
@@ -667,26 +767,13 @@
       clickEl.scrollIntoView({ block: 'center', inline: 'nearest' });
     }
     dispatchClick(clickEl);
-    await sleep(200);
+    await sleep(250);
 
     const timeout = step.timeout_ms || 4000;
     const start = Date.now();
     let item = null;
     while (Date.now() - start < timeout) {
-      const dropdowns = [...document.querySelectorAll('.el-select-dropdown, .el-popper, .dropdown-menu')].filter(
-        (el) => isVisible(el)
-      );
-      const scopes = dropdowns.length ? dropdowns : [document];
-      const items = [];
-      for (const scope of scopes) {
-        items.push(
-          ...[
-            ...scope.querySelectorAll(
-              '.el-select-dropdown__item, [role="option"], .el-scrollbar__view li, li'
-            ),
-          ].filter((el) => isVisible(el) && !(el.textContent || '').includes('กรุณาเลือก'))
-        );
-      }
+      const items = collectVisibleSelectOptions(document);
       item = pickBestOption(items, value, step);
       if (!item && step.fallback_match_pattern) {
         item = pickBestOption(items, null, { ...step, match_pattern: step.fallback_match_pattern });
@@ -700,6 +787,7 @@
         reason: 'option_not_found',
         field: step.field_hint,
         tried_value: value,
+        option_count: collectVisibleSelectOptions(document).length,
       };
     }
 
@@ -715,33 +803,14 @@
     }
     dispatchClick(item);
 
-    // Verify the field actually changed (don't false-ok).
+    // Verify via the control's displayed value only (never full trigger textContent —
+    // open dropdown option labels would false-match bank names).
     const verifyUntil = Date.now() + 2500;
-    const needle = value != null ? String(value).trim() : '';
+    const itemText = (item.textContent || '').trim();
     while (Date.now() < verifyUntil) {
-      const shown = (
-        (trigger.textContent || '') +
-        ' ' +
-        ((clickEl && (clickEl.value || clickEl.textContent)) || '')
-      ).replace(/\s+/g, ' ');
-      if (needle && (shown.includes(needle) || bankMatchNeedles(needle).some((n) => shown.includes(n)))) {
-        return { ok: true, matched: (item.textContent || '').trim() };
-      }
-      if (!needle && step.match_pattern) {
-        try {
-          if (new RegExp(step.match_pattern).test(shown.replace(/\s+/g, ''))) {
-            return { ok: true, matched: (item.textContent || '').trim() };
-          }
-        } catch (_) {
-          /* ignore */
-        }
-        // Numeric account: any long digit run in trigger means success.
-        if (/\d{8,}/.test(shown.replace(/\D/g, ''))) {
-          return { ok: true, matched: (item.textContent || '').trim() };
-        }
-      }
-      if (!shown.includes('กรุณาเลือก') && (item.textContent || '').trim() && shown.includes((item.textContent || '').trim().slice(0, 8))) {
-        return { ok: true, matched: (item.textContent || '').trim() };
+      const shown = readSelectDisplayValue(trigger);
+      if (displayMatchesSelection(shown, value, step, itemText)) {
+        return { ok: true, matched: itemText };
       }
       await sleep(50);
     }
@@ -750,6 +819,7 @@
       reason: 'option_not_applied',
       field: step.field_hint,
       tried_value: value,
+      shown: readSelectDisplayValue(trigger),
       hint: 'คลิกตัวเลือกแล้วแต่ฟอร์มไม่เปลี่ยน — มักเป็น dropdown Element UI',
     };
   }
@@ -1090,6 +1160,9 @@
     apiAdapter,
     runWorkflow,
     runWorkflowStep,
+    selectOption,
+    collectVisibleSelectOptions,
+    readSelectDisplayValue,
     waitForConfirmButton,
     waitForPostClickVerify,
   };
