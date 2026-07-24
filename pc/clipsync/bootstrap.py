@@ -194,10 +194,20 @@ class SlipBootstrap:
     def _on_confirm_result(self, data: dict[str, Any]) -> None:
         reason = data.get("reason")
         ok = data.get("ok")
-        match_key = data.get("matchKey") or data.get("tried")
-        self._app_log(
-            f"Extension confirm_result: ok={ok} reason={reason} match={match_key}"
-        )
+        match_key = data.get("matchKey") or data.get("tried") or "-"
+        verified = data.get("verified")
+        if ok and (verified is True or reason in (None, "", "ok")):
+            msg = f"ยืนยันสำเร็จ ({match_key})"
+            self._app_log(f"Extension: {msg}")
+            self._app_status(msg, "#19a94b")
+        elif reason == "dry_run":
+            msg = f"dry-run พร้อมกดจริง ({match_key}) — ดูกรอบแดงบนหน้าเว็บ"
+            self._app_log(f"Extension: {msg}")
+            self._app_status(msg, "#e09c18")
+        else:
+            msg = f"ยืนยันล้มเหลว: {reason or 'unknown'} ({match_key})"
+            self._app_log(f"Extension: {msg}")
+            self._app_status(msg, "#d92d20")
         if self._orchestrator is not None:
             self._orchestrator.on_confirm_result(data)
 
@@ -229,6 +239,11 @@ class SlipBootstrap:
         append = getattr(self._app, "_append_log", None)
         if callable(append):
             self._app.after(0, lambda: append(message))
+
+    def _app_status(self, message: str, color: str) -> None:
+        setter = getattr(self._app, "_set_status", None)
+        if callable(setter):
+            self._app.after(0, lambda: setter(message, color))
 
 
 def start_slip_bootstrap(app: Any, client: Any, shared_secret: str) -> SlipBootstrap:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from clipsync.ui.debug_panel import (
     STATUS_TAG_COLORS,
+    format_slip_details,
     format_slip_row,
     status_display_label,
     status_tag_for,
@@ -33,12 +34,12 @@ def test_status_tag_for_rejected_and_confirm_failed_are_error():
 
 
 def test_status_display_label_humanizes():
-    assert status_display_label("auto_confirmed") == "auto-confirmed"
-    assert status_display_label("pending_review") == "pending review"
-    assert status_display_label("confirm_failed") == "confirm_failed"
+    assert status_display_label("auto_confirmed") == "สำเร็จ"
+    assert status_display_label("pending_review") == "รอตรวจ"
+    assert status_display_label("confirm_failed") == "ล้มเหลว"
 
 
-def test_format_slip_row_extracts_columns_and_tag():
+def test_format_slip_row_shows_from_to_last4_not_ref_order():
     event = {
         "ts": "2026-07-22T10:15:30+00:00",
         "bank": "SCB",
@@ -48,27 +49,51 @@ def test_format_slip_row_extracts_columns_and_tag():
         "transport": "usb",
         "decision": "pending_review",
         "event_id": "evt-1",
+        "sender_account_last4": "7476",
+        "receiver_account_last4": "1808",
     }
     row = format_slip_row(event)
     assert row.values == (
         "10:15:30",
         "SCB",
         "150.50",
-        "123456",
-        "ORD-9",
-        "usb",
-        "pending review",
+        "…7476",
+        "…1808",
+        "รอตรวจ",
     )
     assert row.tag == "warn"
     assert row.event_id == "evt-1"
     assert row.ref_number == "ABCDEF123456"
 
 
-def test_format_slip_row_short_ref_and_missing_fields():
+def test_format_slip_row_missing_accounts():
     row = format_slip_row({"decision": "rejected", "ref_number": "12"})
-    assert row.values[3] == "12"
+    assert row.values[3] == "-"
+    assert row.values[4] == "-"
     assert row.values[1] == "-"
     assert row.values[2] == "-"
-    assert row.values[4] == "-"
-    assert row.values[5] == "-"
     assert row.tag == "error"
+
+
+def test_format_slip_details_includes_hidden_ref_order_and_names():
+    text = format_slip_details(
+        {
+            "amount": 500,
+            "bank": "SCB",
+            "sender_name": "นางยุพิน",
+            "sender_account_last4": "7518",
+            "receiver_name": "บริษัท ดี พลัส",
+            "receiver_account_last4": "2850",
+            "receiver_bank": "KTB",
+            "ref_number": "REF123",
+            "order_id": "ORD9",
+            "decision": "auto_confirmed",
+            "transport": "usb",
+        }
+    )
+    assert "นางยุพิน" in text
+    assert "7518" in text
+    assert "บริษัท ดี พลัส" in text
+    assert "Ref: REF123" in text
+    assert "Order: ORD9" in text
+    assert "สำเร็จ" in text

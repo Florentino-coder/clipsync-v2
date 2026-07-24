@@ -33,18 +33,23 @@ _STATUS_TAG_MAP = {
 }
 
 _STATUS_LABELS = {
-    "auto_confirmed": "auto-confirmed",
-    "auto-confirmed": "auto-confirmed",
-    "pending_review": "pending review",
-    "pending review": "pending review",
+    "auto_confirmed": "สำเร็จ",
+    "auto-confirmed": "สำเร็จ",
+    "admin_manual": "ยืนยันเอง",
+    "pending_review": "รอตรวจ",
+    "pending review": "รอตรวจ",
+    "rejected": "ปฏิเสธ",
+    "confirm_failed": "ล้มเหลว",
+    "overridden": "แทนที่",
 }
 
-COLUMNS = ("time", "bank", "amount", "ref", "order", "transport", "status")
+# Main table: time | bank | amount | from last4 | to last4 | status
+COLUMNS = ("time", "bank", "amount", "from_acct", "to_acct", "status")
 
 
 @dataclass(frozen=True)
 class SlipRow:
-    values: tuple[str, str, str, str, str, str, str]
+    values: tuple[str, str, str, str, str, str]
     tag: str
     event_id: str
     ref_number: str
@@ -69,7 +74,6 @@ def _format_time(ts: Any) -> str:
         return datetime.now().strftime("%H:%M:%S")
     text = str(ts)
     try:
-        # Support ISO with/without timezone / Z
         normalized = text.replace("Z", "+00:00")
         dt = datetime.fromisoformat(normalized)
         return dt.strftime("%H:%M:%S")
@@ -88,27 +92,45 @@ def _format_amount(amount: Any) -> str:
         return str(amount)
 
 
-def _ref_tail(ref: Any) -> str:
-    if ref is None or ref == "":
-        return "-"
-    text = str(ref)
-    return text[-6:] if len(text) >= 6 else text
+def _account_last4(event: Mapping[str, Any], *keys: str) -> str:
+    for key in keys:
+        val = event.get(key)
+        if val is None or val == "":
+            continue
+        digits = "".join(ch for ch in str(val) if ch.isdigit())
+        if len(digits) >= 4:
+            return f"…{digits[-4:]}"
+        text = str(val).strip()
+        if text:
+            return text[-6:] if len(text) > 6 else text
+    return "-"
 
 
 def format_slip_row(event: Mapping[str, Any]) -> SlipRow:
     decision = event.get("decision") or event.get("status")
     bank = event.get("bank") or event.get("bank_code") or "-"
-    order = event.get("order_id") or event.get("orderId") or "-"
-    transport = event.get("transport") or event.get("source") or "-"
     ref = event.get("ref_number") or event.get("ref") or ""
+    from_acct = _account_last4(
+        event,
+        "sender_account_last4",
+        "senderAccountLast4",
+        "sender_account_masked",
+        "sender_account",
+    )
+    to_acct = _account_last4(
+        event,
+        "receiver_account_last4",
+        "receiverAccountLast4",
+        "receiver_account_masked",
+        "receiver_account",
+    )
     return SlipRow(
         values=(
             _format_time(event.get("ts") or event.get("time")),
             str(bank) if bank else "-",
             _format_amount(event.get("amount")),
-            _ref_tail(ref),
-            str(order) if order else "-",
-            str(transport) if transport else "-",
+            from_acct,
+            to_acct,
             status_display_label(decision if isinstance(decision, str) else None),
         ),
         tag=status_tag_for(decision if isinstance(decision, str) else None),
@@ -116,6 +138,39 @@ def format_slip_row(event: Mapping[str, Any]) -> SlipRow:
         ref_number=str(ref) if ref else "",
         raw=dict(event),
     )
+
+
+def format_slip_details(event: Mapping[str, Any]) -> str:
+    """Human-readable detail block for the รายละเอียด popup."""
+
+    def g(*keys: str, default: str = "-") -> str:
+        for key in keys:
+            val = event.get(key)
+            if val is not None and str(val).strip() != "":
+                return str(val).strip()
+        return default
+
+    lines = [
+        f"เวลา: { _format_time(event.get('ts') or event.get('time')) }",
+        f"จำนวน: {_format_amount(event.get('amount'))}",
+        f"ธนาคารร้าน: {g('bank', 'bank_name_th', 'bank_name')}",
+        "",
+        "ผู้โอน (จาก / บัญชีร้าน)",
+        f"  ชื่อ: {g('sender_name', 'senderName', 'sender')}",
+        f"  บัญชี: {g('sender_account_masked', 'sender_account', 'sender_account_last4')}",
+        "",
+        "ผู้รับ (ไปยัง / สมาชิก)",
+        f"  ชื่อ: {g('receiver_name', 'receiverName', 'receiver')}",
+        f"  บัญชี: {g('receiver_account_masked', 'receiver_account', 'receiver_account_last4')}",
+        f"  ธนาคาร: {g('receiver_bank', 'receiver_bank_name_th', 'receiver_bank_name')}",
+        "",
+        f"สถานะ: {status_display_label(str(event.get('decision') or event.get('status') or ''))}",
+        f"Transport: {g('transport', 'source')}",
+        f"Ref: {g('ref_number', 'ref')}",
+        f"Order: {g('order_id', 'orderId')}",
+        f"Event: {g('event_id')}",
+    ]
+    return "\n".join(lines)
 
 
 ManualConfirmFn = Callable[[Mapping[str, Any]], None]
@@ -155,6 +210,9 @@ class DebugPanel:
         ttk.Button(toolbar, text="ดูรูปสลิป", command=self._view_selected).pack(
             side="left"
         )
+        ttk.Button(toolbar, text="รายละเอียด", command=self._details_selected).pack(
+            side="left", padx=(8, 0)
+        )
         ttk.Button(toolbar, text="ยืนยันเอง", command=self._confirm_selected).pack(
             side="left", padx=(8, 0)
         )
@@ -176,19 +234,17 @@ class DebugPanel:
             "time": "เวลา",
             "bank": "ธนาคาร",
             "amount": "จำนวน",
-            "ref": "Ref…",
-            "order": "Order",
-            "transport": "Transport",
+            "from_acct": "จาก",
+            "to_acct": "ไปยัง",
             "status": "สถานะ",
         }
         widths = {
             "time": 72,
             "bank": 64,
             "amount": 72,
-            "ref": 72,
-            "order": 80,
-            "transport": 72,
-            "status": 110,
+            "from_acct": 72,
+            "to_acct": 72,
+            "status": 90,
         }
         for col in COLUMNS:
             self.tree.heading(col, text=headings[col])
@@ -245,12 +301,18 @@ class DebugPanel:
         if self._on_view_slip is not None:
             self._on_view_slip(row.raw)
             return
-        # Stub when no image / fetcher wired
         messagebox.showinfo(
             "ดูรูปสลิป",
             f"ยังไม่มีรูปสำหรับ event {row.event_id or '-'}\n"
             "(ต้องเชื่อม USB + slip_fetcher)",
         )
+
+    def _details_selected(self) -> None:
+        row = self._selected_row()
+        if row is None:
+            messagebox.showinfo("รายละเอียด", "เลือกแถวสลิปก่อน")
+            return
+        messagebox.showinfo("รายละเอียดสลิป", format_slip_details(row.raw))
 
     def _confirm_selected(self) -> None:
         row = self._selected_row()

@@ -136,20 +136,8 @@
     },
     {
       "action": "wait_for",
-      "match_text": "ยืนยัน|ต้องการบันทึก|ตกลง",
-      "timeout_ms": 8000
-    },
-    {
-      "action": "click",
-      "match_text": "ตกลง|ยืนยัน|confirm",
-      "nth_fallback": "last",
-      "selector_hints": [
-        "button.btn-primary",
-        ".el-message-box__btns button",
-        "button.btn",
-        "button",
-        "a.btn"
-      ]
+      "match_text": "บันทึก รายการถอน สำเร็จ|รายการถอน สำเร็จ",
+      "timeout_ms": 10000
     },
     {
       "action": "verify_result",
@@ -158,7 +146,21 @@
         "รายการถอน สำเร็จ",
         "ปิดงานสำเร็จ"
       ],
-      "timeout_ms": 15000
+      "timeout_ms": 5000
+    },
+    {
+      "action": "click",
+      "match_text": "ตกลง",
+      "nth_fallback": "last",
+      "selector_hints": [
+        ".el-message-box__btns button",
+        ".el-message-box button",
+        "[class*='message-box'] button",
+        "[role='dialog'] button",
+        "button.btn-primary",
+        "button.btn",
+        "button"
+      ]
     }
   ],
   "_notes": [
