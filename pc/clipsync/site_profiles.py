@@ -149,7 +149,16 @@ def _validate_close_job_workflow(raw: Any) -> list[dict[str, Any]]:
     """Optional multi-step DOM close-job workflow (Task 4.5)."""
     _expect_type(raw, list, "close_job_workflow")
     steps: list[dict[str, Any]] = []
-    allowed = {"click", "wait_for", "select_option", "verify_or_fill", "verify_result"}
+    # Keep in sync with pc/chrome-extension/engine.js runStep switch.
+    allowed = {
+        "check",
+        "click",
+        "scroll_into_view",
+        "select_option",
+        "verify_or_fill",
+        "verify_result",
+        "wait_for",
+    }
     for i, step in enumerate(raw):
         path = f"close_job_workflow[{i}]"
         _expect_type(step, dict, path)

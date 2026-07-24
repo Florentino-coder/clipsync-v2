@@ -187,6 +187,35 @@ def test_validate_optional_close_job_workflow():
     assert len(validated["close_job_workflow"]) == 2
 
 
+def test_validate_accepts_scroll_and_check_actions():
+    validated = validate_profile(
+        _valid_profile(
+            close_job_workflow=[
+                {"action": "scroll_into_view", "scope": "popup", "match_text": "โอน"},
+                {"action": "check", "scope": "popup", "match_text": "โอนเงินเรียบร้อยแล้ว"},
+            ]
+        )
+    )
+    assert [s["action"] for s in validated["close_job_workflow"]] == [
+        "scroll_into_view",
+        "check",
+    ]
+
+
+def test_jinbao356_profile_validates():
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "chrome-extension"
+        / "profiles"
+        / "jinbao356_v1.json"
+    )
+    profiles = load_profiles(path)
+    assert profiles[0]["profile_id"] == "jinbao356_v1"
+    actions = {s["action"] for s in profiles[0]["close_job_workflow"]}
+    assert "scroll_into_view" in actions
+    assert "check" in actions
+
+
 def test_validate_rejects_unknown_workflow_action():
     with pytest.raises(ValueError, match="action"):
         validate_profile(
