@@ -8,6 +8,7 @@ class SlipEvent {
   final String? senderAccountLast4;
   final String? receiverAccountMasked;
   final String? senderAccountMasked;
+  final String? receiverBank;
   final String? refNumber;
   final double ocrConfidence;
   final bool parseFailed;
@@ -23,6 +24,7 @@ class SlipEvent {
     this.senderAccountLast4,
     this.receiverAccountMasked,
     this.senderAccountMasked,
+    this.receiverBank,
     this.refNumber,
     required this.ocrConfidence,
     required this.parseFailed,
@@ -39,6 +41,7 @@ class SlipEvent {
         'sender_account_last4': senderAccountLast4,
         'receiver_account_masked': receiverAccountMasked,
         'sender_account_masked': senderAccountMasked,
+        'receiver_bank': receiverBank,
         'ref_number': refNumber,
         'ocr_confidence': ocrConfidence,
         'parse_failed': parseFailed,

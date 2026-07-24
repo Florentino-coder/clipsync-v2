@@ -162,6 +162,42 @@ describe('deepFindByText + findRow + findConfirmButton', () => {
     assert.equal(result.status, 'ambiguous');
   });
 
+  it('disambiguates same amount using member account last4 + bank', () => {
+    const dom = new JSDOM(`<!doctype html><body>
+      <table>
+        <tr class="order-row">
+          <td>WD1</td><td>100.00</td><td>ธนาคารกสิกรไทย</td><td>xxx0860</td>
+          <td><button class="eye">view</button></td>
+        </tr>
+        <tr class="order-row">
+          <td>WD2</td><td>100.00</td><td>ธนาคารกรุงไทย</td><td>xxx0860</td>
+          <td><button class="eye">view</button></td>
+        </tr>
+        <tr class="order-row">
+          <td>WD3</td><td>100.00</td><td>ธนาคารกรุงไทย</td><td>xxx1234</td>
+          <td><button class="eye">view</button></td>
+        </tr>
+      </table>
+    </body>`);
+    global.document = dom.window.document;
+    const profile = { ...PROFILE, row_selector_hints: ['tr.order-row', 'tr'] };
+
+    assert.equal(findRow(profile, '100.00').status, 'ambiguous');
+
+    const byAcct = findRow(profile, '100.00', document, {
+      account_last4: '1234',
+    });
+    assert.equal(byAcct.status, 'ok', JSON.stringify(byAcct));
+    assert.match(byAcct.row.textContent, /WD3/);
+
+    const byBank = findRow(profile, '100.00', document, {
+      account_last4: '0860',
+      bank: 'KTB',
+    });
+    assert.equal(byBank.status, 'ok', JSON.stringify(byBank));
+    assert.match(byBank.row.textContent, /WD2/);
+  });
+
   it('returns already_confirmed when indicators are present', () => {
     const rowResult = findRow(PROFILE, 'ORD2002');
     assert.equal(rowResult.status, 'ok');

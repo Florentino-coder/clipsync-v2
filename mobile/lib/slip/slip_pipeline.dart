@@ -83,6 +83,7 @@ class SlipPipeline {
       senderAccountLast4: parsed.senderAccountLast4,
       receiverAccountMasked: parsed.receiverAccountMasked,
       senderAccountMasked: parsed.senderAccountMasked,
+      receiverBank: parsed.receiverBank,
       refNumber: parsed.refNumber,
       ocrConfidence: ocrResult.confidence,
       parseFailed: !parsed.valid,

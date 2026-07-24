@@ -82,6 +82,10 @@ function showResultBanner(ok, detail) {
     if (!out.receiver_account_last4 && out.receiverAccountLast4) {
       out.receiver_account_last4 = out.receiverAccountLast4;
     }
+    if (!out.receiver_bank && out.receiverBank) out.receiver_bank = out.receiverBank;
+    if (!out.receiver_bank_name_th && out.receiverBankNameTh) {
+      out.receiver_bank_name_th = out.receiverBankNameTh;
+    }
     if (!out.sender_name && out.senderName) out.sender_name = out.senderName;
     // Shop payout account = the slip's "จาก/from" account. Expose its last-4 for the
     // หมายเลขบัญชี dropdown match (e.g. SCB "xxx-xxx747-6" → 7476).
@@ -116,16 +120,31 @@ function showResultBanner(ok, detail) {
     const matchKeys = [orderId, refNumber, amount].filter((k) => k && k !== '-' && k !== 'None');
     if (matchKeys.length === 0) return { ok: false, reason: 'no_match_key' };
 
+    // Enrich slip before row lookup so same-amount rows can be narrowed by
+    // member (payee) account + bank from the slip.
+    const slip = enrichSlip(
+      data && data.slip && typeof data.slip === 'object' ? { ...data.slip } : {}
+    );
+    if (!slip.amount && amount) slip.amount = amount;
+    if (!slip.ref_number && refNumber) slip.ref_number = refNumber;
+    const rowHints = {
+      account_last4: slip.receiver_account_last4 || '',
+      bank: slip.receiver_bank || slip.receiver_bank_name_th || '',
+    };
+
     let rowResult = { status: 'row_not_found' };
     let usedKey = '';
     for (const key of matchKeys) {
-      rowResult = E.findRow(profile, key);
+      rowResult = E.findRow(profile, key, document, rowHints);
       if (rowResult.status === 'ok') {
         usedKey = key;
         break;
       }
       if (rowResult.status === 'ambiguous') {
-        showResultBanner(false, `ClipSync: พบหลายแถวสำหรับ ${key} — แคบการค้นหาบนหน้าหลังบ้าน`);
+        showResultBanner(
+          false,
+          `ClipSync: พบหลายแถวสำหรับ ${key} — ตรวจยอด+เลขบัญชี/ธนาคารสมาชิกแล้วยังกำกวม`
+        );
         return { ok: false, reason: 'ambiguous', matchKey: key };
       }
     }
@@ -148,11 +167,6 @@ function showResultBanner(ok, detail) {
 
     const workflow = profile.close_job_workflow;
     if (Array.isArray(workflow) && workflow.length > 0) {
-      const slip = enrichSlip(
-        data && data.slip && typeof data.slip === 'object' ? { ...data.slip } : {}
-      );
-      if (!slip.amount && amount) slip.amount = amount;
-      if (!slip.ref_number && refNumber) slip.ref_number = refNumber;
       const result = await E.runWorkflow(
         profile,
         workflow,

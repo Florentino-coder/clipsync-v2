@@ -56,6 +56,7 @@ def default_config() -> dict[str, Any]:
         },
         "matching": {
             "require_account_last4_match": True,
+            "require_bank_match": True,
             "prevent_duplicate_ref_number": True,
         },
         "license": {
@@ -139,6 +140,12 @@ def _validate(cfg: dict[str, Any]) -> None:
         bool,
         "matching.require_account_last4_match",
     )
+    if "require_bank_match" in matching:
+        _expect_type(
+            matching.get("require_bank_match"),
+            bool,
+            "matching.require_bank_match",
+        )
     _expect_type(
         matching.get("prevent_duplicate_ref_number"),
         bool,

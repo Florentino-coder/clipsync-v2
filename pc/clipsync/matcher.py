@@ -8,6 +8,17 @@ from typing import Any, Iterable, Mapping, MutableSet, Optional, Set
 
 AMOUNT_EPSILON = 0.005
 
+# Member/payee bank aliases — order row bank vs slip receiver bank.
+_BANK_ALIASES: dict[str, tuple[str, ...]] = {
+    "SCB": ("SCB", "ไทยพาณิชย์", "ธนาคารไทยพาณิชย์", "SIAM COMMERCIAL"),
+    "KBANK": ("KBANK", "KPLUS", "K+", "กสิกร", "ธนาคารกสิกรไทย", "KASIKORN"),
+    "BBL": ("BBL", "กรุงเทพ", "ธนาคารกรุงเทพ", "BANGKOK BANK"),
+    "KTB": ("KTB", "กรุงไทย", "ธนาคารกรุงไทย", "KRUNGTHAI"),
+    "GSB": ("GSB", "ออมสิน", "ธนาคารออมสิน", "MYMO"),
+    "TTB": ("TTB", "ทหารไทย", "ธนชาต", "ธนาคารทหารไทยธนชาต"),
+    "BAY": ("BAY", "กรุงศรี", "ธนาคารกรุงศรีอยุธยา"),
+}
+
 
 def _amount_present(value: Any) -> bool:
     """True when amount is a usable number (missing/None rejected; never default to 0)."""
@@ -40,6 +51,59 @@ def _auto_confirm_cfg(cfg: Mapping[str, Any]) -> Mapping[str, Any]:
     return cfg.get("auto_confirm") or {}
 
 
+def _normalize_bank_text(value: Any) -> str:
+    text = str(value or "").strip().upper()
+    text = text.replace(" ", "").replace("-", "")
+    return text
+
+
+def _bank_codes_for(value: Any) -> set[str]:
+    """Map a free-form bank label/code to canonical codes (SCB, KBANK, …)."""
+    text = _normalize_bank_text(value)
+    if not text:
+        return set()
+    codes: set[str] = set()
+    for code, aliases in _BANK_ALIASES.items():
+        needles = (_normalize_bank_text(code),) + tuple(
+            _normalize_bank_text(a) for a in aliases
+        )
+        if any(n and n in text for n in needles):
+            codes.add(code)
+        if text == code:
+            codes.add(code)
+    return codes
+
+
+def _banks_match(ocr_bank: Any, order_bank: Any) -> bool:
+    left = _bank_codes_for(ocr_bank)
+    right = _bank_codes_for(order_bank)
+    if not left or not right:
+        return False
+    return bool(left & right)
+
+
+def _ocr_receiver_bank(ocr: Mapping[str, Any]) -> str:
+    for key in (
+        "receiver_bank",
+        "receiver_bank_name_th",
+        "receiver_bank_name",
+        "member_bank",
+        "member_bank_name",
+    ):
+        val = ocr.get(key)
+        if val is not None and str(val).strip():
+            return str(val).strip()
+    return ""
+
+
+def _order_bank(order: Mapping[str, Any]) -> str:
+    for key in ("bank", "bank_name", "bank_name_th", "member_bank", "member_bank_name"):
+        val = order.get(key)
+        if val is not None and str(val).strip():
+            return str(val).strip()
+    return ""
+
+
 def _candidate_matches(
     ocr: Mapping[str, Any],
     order: Mapping[str, Any],
@@ -56,6 +120,14 @@ def _candidate_matches(
         order_last4 = str(order.get("account_last4") or "")
         if ocr_last4 != order_last4:
             return False
+    if matching.get("require_bank_match", True):
+        # Payee/member bank only. Skip when OCR has no receiver bank so older
+        # APKs without that field still match on amount+last4.
+        ocr_bank = _ocr_receiver_bank(ocr)
+        if ocr_bank:
+            order_bank = _order_bank(order)
+            if not order_bank or not _banks_match(ocr_bank, order_bank):
+                return False
     return True
 
 

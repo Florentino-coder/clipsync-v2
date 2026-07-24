@@ -882,6 +882,9 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
                 "receiver_account",
                 "receiver_account_last4",
                 "receiver_account_masked",
+                "receiver_bank",
+                "receiver_bank_name",
+                "receiver_bank_name_th",
             )
             if event.get(k) is not None
         }
@@ -890,6 +893,8 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
             slip_payload["bank_name"] = event.get("bank")
         if "receiver_account_last4" not in slip_payload and event.get("receiverAccountLast4"):
             slip_payload["receiver_account_last4"] = event.get("receiverAccountLast4")
+        if "receiver_bank" not in slip_payload and event.get("receiverBank"):
+            slip_payload["receiver_bank"] = event.get("receiverBank")
         if "sender_name" not in slip_payload and event.get("senderName"):
             slip_payload["sender_name"] = event.get("senderName")
         # The external slip app forwards only the receiver account; the close-job

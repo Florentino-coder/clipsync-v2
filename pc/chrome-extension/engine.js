@@ -111,7 +111,34 @@
     return dedupeNestedRows(rows);
   }
 
-  function findRow(profile, refNumber, doc) {
+  /**
+   * When several rows share the same amount/ref, narrow by member (payee) account
+   * and bank from the slip. Account last-4 is the primary disambiguator; bank is
+   * applied when provided (receiver/member bank, not the shop/sender bank).
+   */
+  function filterRowsBySlipHints(rows, hints) {
+    if (!hints || !rows || rows.length <= 1) return rows;
+    let filtered = rows;
+    const last4 = String(hints.account_last4 || hints.receiver_account_last4 || '')
+      .replace(/\D/g, '')
+      .slice(-4);
+    if (last4.length === 4) {
+      filtered = filtered.filter((row) =>
+        String(row.textContent || '').replace(/\D/g, '').includes(last4)
+      );
+    }
+    const bank = hints.bank || hints.receiver_bank || hints.bank_name_th || '';
+    if (bank && filtered.length > 1) {
+      const bankNeedles = bankMatchNeedles(bank);
+      filtered = filtered.filter((row) => {
+        const text = String(row.textContent || '');
+        return bankNeedles.some((n) => text.includes(n));
+      });
+    }
+    return filtered;
+  }
+
+  function findRow(profile, refNumber, doc, hints) {
     const document = getDocument(doc);
     if (!document || !document.body) return { status: 'row_not_found' };
 
@@ -123,7 +150,8 @@
 
     // Try most specific needle first (1828.00 before 1828).
     for (const needle of needles) {
-      const rows = collectRowsForNeedle(document, selector, needle);
+      let rows = collectRowsForNeedle(document, selector, needle);
+      if (rows.length > 1) rows = filterRowsBySlipHints(rows, hints);
       if (rows.length === 1) return { status: 'ok', row: rows[0] };
       if (rows.length > 1) ambiguousRows = rows;
     }

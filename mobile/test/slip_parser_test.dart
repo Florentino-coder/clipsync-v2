@@ -151,6 +151,7 @@ void main() {
       expect(p.senderAccountMasked, 'xxxxx0758x');
       expect(p.receiverAccountMasked, 'xxxxx0860x');
       expect(p.senderAccountLast4, '0758');
+      expect(p.receiverBank, 'KTB');
     });
 
     test('Krungthai — XXX-X-XX994-3', () {
@@ -158,13 +159,7 @@ void main() {
       expect(p.senderAccountMasked, 'xxxxxx9943');
       expect(p.receiverAccountMasked, 'xxxxxx8591');
       expect(p.senderAccountLast4, '9943');
-    });
-
-    test('GSB mymo — leading digits visible (0203xxxx7778)', () {
-      final p = parseFixture('gsb_mymo_real.txt');
-      expect(p.senderAccountMasked, '0203xxxx7778');
-      expect(p.receiverAccountMasked, '01xxxx2850');
-      expect(p.senderAccountLast4, '7778');
+      expect(p.receiverBank, 'SCB');
     });
 
     test('BBL — only 3 visible tail digits (584-0-xxx518)', () {
@@ -172,6 +167,15 @@ void main() {
       // Previously dropped (only 3 tail digits); now captured with prefix.
       expect(p.senderAccountMasked, '5840xxx518');
       expect(p.receiverAccountMasked, '0170xxx850');
+      expect(p.receiverBank, 'KTB');
+    });
+
+    test('GSB mymo — leading digits visible (0203xxxx7778)', () {
+      final p = parseFixture('gsb_mymo_real.txt');
+      expect(p.senderAccountMasked, '0203xxxx7778');
+      expect(p.receiverAccountMasked, '01xxxx2850');
+      expect(p.senderAccountLast4, '7778');
+      expect(p.receiverBank, 'KTB');
     });
   });
 

@@ -16,6 +16,9 @@ class ParsedSlip {
   // banks that mask the tail (KBANK) or show few digits (BBL) still match.
   final String? receiverAccountMasked;
   final String? senderAccountMasked;
+  // Payee/member bank on the slip ("ไปยัง") — used to disambiguate same-amount
+  // withdrawal rows. Distinct from the slip issuer bank (sender/"จาก").
+  final String? receiverBank;
   final String? senderName;
   final bool valid;
   final List<String> errors;
@@ -27,6 +30,7 @@ class ParsedSlip {
     this.senderAccountLast4,
     this.receiverAccountMasked,
     this.senderAccountMasked,
+    this.receiverBank,
     this.senderName,
     required this.valid,
     this.errors = const [],
@@ -52,6 +56,36 @@ String normalizeOcrDigits(String value) => value
     .replaceAll('o', '0')
     .replaceAll('l', '1')
     .replaceAll('I', '1');
+
+/// Bank names found in OCR text, in document order. On Thai slips the first is
+/// usually the payer ("จาก") and the last the payee ("ไปยัง"/member).
+List<String> extractBankCodesInOrder(String raw) {
+  final patterns = <(RegExp, String)>[
+    (RegExp(r'กสิกร|KBANK|K\s*PLUS|K\+', caseSensitive: false), 'KBANK'),
+    (RegExp(r'ไทยพาณิชย์|SCB|Siam\s*Commercial', caseSensitive: false), 'SCB'),
+    (RegExp(r'กรุงเทพ|BBL|Bangkok\s*Bank', caseSensitive: false), 'BBL'),
+    // กรุงไทย before กรุงเทพ already handled; avoid matching กรุงเทพ as KTB.
+    (RegExp(r'กรุงไทย|KTB|Krungthai|Krung\s*Thai', caseSensitive: false), 'KTB'),
+    (RegExp(r'ออมสิน|GSB|mymo|MyMo', caseSensitive: false), 'GSB'),
+    (RegExp(r'ทหารไทย|ธนชาต|TTB', caseSensitive: false), 'TTB'),
+    (RegExp(r'กรุงศรี|BAY', caseSensitive: false), 'BAY'),
+  ];
+  final hits = <({int start, String code})>[];
+  for (final (re, code) in patterns) {
+    for (final m in re.allMatches(raw)) {
+      hits.add((start: m.start, code: code));
+    }
+  }
+  hits.sort((a, b) => a.start.compareTo(b.start));
+  // Collapse adjacent duplicates of the same code (logo + text next to it).
+  final ordered = <String>[];
+  for (final h in hits) {
+    if (ordered.isEmpty || ordered.last != h.code) {
+      ordered.add(h.code);
+    }
+  }
+  return ordered;
+}
 
 ParsedSlip parseSlipFields(
   String raw, {
@@ -119,6 +153,20 @@ ParsedSlip parseSlipFields(
     errors.add('last4_missing');
   }
 
+  // Payee bank = first bank after the slip-issuer bank (member side). Ignore
+  // footer logos that repeat the issuer (e.g. "mymo by GSB" at the bottom).
+  final banksInOrder = extractBankCodesInOrder(raw);
+  String? receiverBank;
+  if (banksInOrder.length >= 2) {
+    final senderBank = banksInOrder.first;
+    for (final code in banksInOrder.skip(1)) {
+      if (code != senderBank) {
+        receiverBank = code;
+        break;
+      }
+    }
+  }
+
   return ParsedSlip(
     amount: amount,
     refNumber: ref,
@@ -126,6 +174,7 @@ ParsedSlip parseSlipFields(
     senderAccountLast4: last4Of(senderMasked),
     receiverAccountMasked: receiverMasked,
     senderAccountMasked: senderMasked,
+    receiverBank: receiverBank,
     valid: errors.isEmpty,
     errors: errors,
   );

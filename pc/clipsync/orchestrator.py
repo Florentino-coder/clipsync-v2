@@ -61,10 +61,14 @@ def _normalize_order(order: Mapping[str, Any]) -> dict[str, Any]:
     if last4 is None:
         acct = order.get("member_bank_account") or order.get("account") or ""
         last4 = str(acct)[-4:] if acct else ""
+    bank = order.get("bank")
+    if bank is None:
+        bank = order.get("bank_name") or order.get("bank_name_th") or order.get("member_bank")
     return {
         "order_id": str(order_id) if order_id is not None else "",
         "amount": order.get("amount"),
         "account_last4": str(last4) if last4 is not None else "",
+        "bank": str(bank).strip() if bank is not None and str(bank).strip() else "",
     }
 
 

@@ -219,3 +219,85 @@ def test_used_refs_none_ok_when_prevent_duplicate_disabled():
     result = match_order(OCR, ORDERS, cfg, used_refs=None)
     assert result is not None
     assert result["order_id"] == "1234"
+
+
+def test_same_amount_disambiguates_by_member_bank():
+    """Two withdrawals at 100.00 — pick the one whose bank matches the slip payee."""
+    cfg = {
+        **CFG,
+        "matching": {
+            "require_account_last4_match": True,
+            "require_bank_match": True,
+            "prevent_duplicate_ref_number": True,
+        },
+    }
+    ocr = {
+        "amount": 100.0,
+        "receiver_account_last4": "0860",
+        "receiver_bank": "KTB",
+        "ref_number": "REF-BANK-1",
+        "ocr_confidence": 0.97,
+    }
+    orders = [
+        {
+            "order_id": "a",
+            "amount": 100.0,
+            "account_last4": "0860",
+            "bank": "SCB",
+        },
+        {
+            "order_id": "b",
+            "amount": 100.0,
+            "account_last4": "0860",
+            "bank": "ธนาคารกรุงไทย",
+        },
+    ]
+    matched = match_order(ocr, orders, cfg, used_refs=set())
+    assert matched is not None
+    assert matched["order_id"] == "b"
+
+
+def test_same_amount_rejects_wrong_member_bank():
+    cfg = {
+        **CFG,
+        "matching": {
+            "require_account_last4_match": True,
+            "require_bank_match": True,
+            "prevent_duplicate_ref_number": True,
+        },
+    }
+    ocr = {
+        "amount": 100.0,
+        "receiver_account_last4": "0860",
+        "receiver_bank": "KTB",
+        "ref_number": "REF-BANK-2",
+        "ocr_confidence": 0.97,
+    }
+    orders = [
+        {"order_id": "a", "amount": 100.0, "account_last4": "0860", "bank": "SCB"},
+    ]
+    assert match_order(ocr, orders, cfg, used_refs=set()) is None
+
+
+def test_bank_match_skipped_when_ocr_has_no_receiver_bank():
+    """Without a payee bank on the slip, don't fail closed on bank — last4 still applies."""
+    cfg = {
+        **CFG,
+        "matching": {
+            "require_account_last4_match": True,
+            "require_bank_match": True,
+            "prevent_duplicate_ref_number": True,
+        },
+    }
+    ocr = {
+        "amount": 100.0,
+        "receiver_account_last4": "0860",
+        "ref_number": "REF-BANK-3",
+        "ocr_confidence": 0.97,
+    }
+    orders = [
+        {"order_id": "a", "amount": 100.0, "account_last4": "0860", "bank": "SCB"},
+    ]
+    matched = match_order(ocr, orders, cfg, used_refs=set())
+    assert matched is not None
+    assert matched["order_id"] == "a"
