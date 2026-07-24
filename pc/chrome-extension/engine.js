@@ -393,9 +393,32 @@
     return Boolean(el.offsetParent);
   }
 
+  /**
+   * Smallest visible container whose text includes scopeText and that holds a real form control.
+   * Needed because some sites (BootstrapVue) render the close-job form in a plain .card, not a dialog.
+   */
+  function findScopeByText(document, scopeText) {
+    if (!document || !scopeText) return null;
+    let cands = [];
+    try {
+      cands = [
+        ...document.querySelectorAll('.card, .modal, [role="dialog"], .el-dialog, form, section, div'),
+      ].filter((el) => isVisible(el) && (el.textContent || '').includes(scopeText));
+    } catch (_) {
+      cands = [];
+    }
+    if (!cands.length) return null;
+    cands.sort((a, b) => (a.textContent || '').length - (b.textContent || '').length);
+    return cands.find((el) => el.querySelector('fieldset, select, .el-select')) || cands[0];
+  }
+
   function findScopeRoot(step, context, doc) {
     const document = getDocument(doc);
     if (step.scope === 'popup') {
+      if (step.scope_text) {
+        const byText = findScopeByText(document, step.scope_text);
+        if (byText) return byText;
+      }
       for (const hint of POPUP_SCOPE_HINTS) {
         let els = [];
         try {
@@ -486,27 +509,37 @@
     return matched[0];
   }
 
-  /** Prefer real form rows that contain a select control (avoid member-info labels). */
+  // Label selectors incl. BootstrapVue <legend> and el-form-item label.
+  const FIELD_LABEL_SELECTOR =
+    '.el-form-item__label, legend, .col-form-label, label, .control-label';
+  const FIELD_CONTROL_SELECTOR =
+    '.el-select, .el-select__wrapper, select, .custom-dropdown, input, textarea';
+
+  function fieldLabelText(el) {
+    const labelEl = el.querySelector(FIELD_LABEL_SELECTOR);
+    return labelEl ? labelEl.textContent || '' : '';
+  }
+
+  /** Prefer real form rows that contain a control (avoid member-info display labels). */
   function findFieldContainer(root, fieldHint) {
     if (!root || !fieldHint) return null;
-    const formItems = [...root.querySelectorAll('.el-form-item, .form-group')];
+    // fieldset = BootstrapVue field; .form-group/.el-form-item = other frameworks.
+    const formItems = [...root.querySelectorAll('fieldset, .el-form-item, .form-group')];
+    // Pass 1: label matches AND container has a control.
     for (const el of formItems) {
-      const labelEl = el.querySelector('.el-form-item__label, label, .control-label');
-      const labelText = labelEl ? labelEl.textContent || '' : '';
+      const labelText = fieldLabelText(el);
       if (!labelText.includes(fieldHint) || labelText.length >= 80) continue;
-      if (el.querySelector('.el-select, .el-select__wrapper, select, .custom-dropdown, input, textarea')) {
-        return el;
-      }
+      if (el.querySelector(FIELD_CONTROL_SELECTOR)) return el;
     }
+    // Pass 2: label matches (control optional).
     for (const el of formItems) {
-      const labelEl = el.querySelector('.el-form-item__label, label, .control-label');
-      const labelText = labelEl ? labelEl.textContent || '' : '';
+      const labelText = fieldLabelText(el);
       if (labelText.includes(fieldHint) && labelText.length < 80) return el;
     }
+    // Pass 3: generic label/div fallback.
     const labeled = [...root.querySelectorAll('label, div')];
     for (const el of labeled) {
-      const labelEl = el.querySelector('.el-form-item__label, label, .control-label');
-      const labelText = labelEl ? labelEl.textContent || '' : '';
+      const labelText = fieldLabelText(el);
       if (labelText.includes(fieldHint) && labelText.length < 80) return el;
     }
     for (const el of labeled) {
@@ -957,6 +990,108 @@
     return { type, bubbles: true };
   }
 
+  /** Set <select>.value through the native setter so Vue/React v-model picks it up, then fire events. */
+  function setNativeSelectValue(select, val) {
+    try {
+      const proto = Object.getPrototypeOf(select);
+      const desc = proto && Object.getOwnPropertyDescriptor(proto, 'value');
+      if (desc && desc.set) desc.set.call(select, val);
+      else select.value = val;
+    } catch (_) {
+      select.value = val;
+    }
+    // BootstrapVue / Vue listen on change; some bindings also want input.
+    select.dispatchEvent(domEvent(select, 'input'));
+    select.dispatchEvent(domEvent(select, 'change'));
+  }
+
+  /** True when a <select> is still on its empty/disabled placeholder (e.g. --- กรุณาเลือก ---). */
+  function isPlaceholderSelectValue(select) {
+    if (!select) return true;
+    const val = String(select.value || '').trim();
+    if (!val) return true;
+    const opts = select.selectedOptions
+      ? [...select.selectedOptions]
+      : select.options
+      ? [select.options[select.selectedIndex]]
+      : [];
+    const opt = opts[0];
+    if (!opt) return false;
+    if (opt.disabled) return true;
+    return (opt.textContent || '').includes('กรุณาเลือก');
+  }
+
+  function matchNativeOption(select, value, step) {
+    let opt = [...select.options].find((o) => optionTextMatches(o.textContent || o.value, value, step));
+    if (!opt && step.fallback_match_pattern) {
+      opt = [...select.options].find((o) =>
+        optionTextMatches(o.textContent || o.value, null, {
+          ...step,
+          match_pattern: step.fallback_match_pattern,
+        })
+      );
+    }
+    return opt || null;
+  }
+
+  /**
+   * Native <select> apply with polling — the account select is disabled + empty until the
+   * bank change event repopulates it, so we wait for the real option to appear.
+   */
+  async function applyNativeSelect(select, value, step, root) {
+    const isAccount = step.field_hint && String(step.field_hint).includes('หมายเลขบัญชี');
+    if (isAccount) {
+      const bankBox = root && (findFieldContainer(root, 'ชื่อธนาคาร') || findFieldContainer(root, 'ธนาคาร'));
+      const bankSelect = bankBox && bankBox.querySelector('select');
+      if (bankSelect && isPlaceholderSelectValue(bankSelect)) {
+        return {
+          ok: false,
+          reason: 'bank_not_selected',
+          field: step.field_hint,
+          hint: 'ธนาคารยังไม่ถูกเลือก — ช่องหมายเลขบัญชีจะเปิดหลังเลือกธนาคารสำเร็จ',
+        };
+      }
+    }
+
+    const timeout = step.timeout_ms || 6000;
+    const start = Date.now();
+    let opt = matchNativeOption(select, value, step);
+    while (!opt && Date.now() - start < timeout) {
+      await sleep(120);
+      opt = matchNativeOption(select, value, step);
+    }
+    if (!opt) {
+      return {
+        ok: false,
+        reason: 'option_not_found',
+        field: step.field_hint,
+        tried_value: value,
+        option_count: select.options.length,
+        disabled: Boolean(select.disabled),
+      };
+    }
+
+    setNativeSelectValue(select, opt.value);
+
+    // Verify the value actually stuck (native select reflects immediately).
+    const verifyUntil = Date.now() + 1500;
+    const want = opt.value;
+    while (Date.now() < verifyUntil) {
+      if (String(select.value) === String(want)) {
+        return { ok: true, matched: (opt.textContent || '').trim(), native: true };
+      }
+      await sleep(50);
+    }
+    return {
+      ok: false,
+      reason: 'option_not_applied',
+      field: step.field_hint,
+      tried_value: value,
+      shown: select.value,
+      hint: 'ตั้งค่า select แล้วแต่ค่าไม่ติด — ตรวจ event binding ของหน้าเว็บ',
+    };
+  }
+
   async function selectOption(step, context, doc) {
     const document = getDocument(doc);
     const root = findScopeRoot(step, context, doc);
@@ -987,34 +1122,25 @@
     const fieldBox = step.field_hint ? findFieldContainer(root, step.field_hint) : null;
     if (fieldBox) select = fieldBox.querySelector('select');
     else if (step.field_hint) {
-      const labels = [...root.querySelectorAll('label')].filter((l) =>
+      const labels = [...root.querySelectorAll('label, legend')].filter((l) =>
         (l.textContent || '').includes(step.field_hint)
       );
-      if (labels.length) select = labels[0].querySelector('select');
+      for (const l of labels) {
+        // Control may be a sibling (BootstrapVue legend + div>select), not a child.
+        const near =
+          l.querySelector('select') ||
+          (l.parentElement && l.parentElement.querySelector('select'));
+        if (near) {
+          select = near;
+          break;
+        }
+      }
     } else {
       select = root.querySelector('select');
     }
 
     if (select) {
-      const native = [...select.options].find((o) => optionTextMatches(o.textContent || o.value, value, step));
-      if (!native) {
-        if (step.fallback_match_pattern) {
-          const fb = [...select.options].find((o) =>
-            optionTextMatches(o.textContent || o.value, null, {
-              ...step,
-              match_pattern: step.fallback_match_pattern,
-            })
-          );
-          if (!fb) return { ok: false, reason: 'option_not_found' };
-          select.value = fb.value;
-          select.dispatchEvent(domEvent(select, 'change'));
-          return { ok: true, matched: fb.textContent };
-        }
-        return { ok: false, reason: 'option_not_found' };
-      }
-      select.value = native.value;
-      select.dispatchEvent(domEvent(select, 'change'));
-      return { ok: true, matched: native.textContent };
+      return applyNativeSelect(select, value, step, root);
     }
 
     // Element UI / custom dropdown — prefer real el-select in the field box.

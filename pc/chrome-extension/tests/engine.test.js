@@ -563,3 +563,165 @@ describe('Element UI select_option', () => {
     assert.equal(acct.reason, 'bank_not_selected');
   });
 });
+
+describe('BootstrapVue native <select> close-job (real Jinbao structure)', () => {
+  function makeDom() {
+    // Mirrors manage.jinbao356.com: 11 native selects; transfer form in a .card, labels in <legend>.
+    return new JSDOM(`<!DOCTYPE html><body>
+      <!-- top page filters (must NOT be picked) -->
+      <fieldset class="form-group"><legend>บัญชีถอน</legend><div>
+        <select id="filter-acc"><option value="">--- ทั้งหมด ---</option><option value="p1">12payme</option></select>
+      </div></fieldset>
+      <fieldset class="form-group"><legend>ธนาคาร</legend><div>
+        <select id="filter-bank">
+          <option value="">--- ทั้งหมด ---</option>
+          <option value="x1">ธนาคารกรุงไทย</option>
+          <option value="x2">ธนาคารกสิกรไทย</option>
+          <option value="x3">ธนาคารไทยพาณิชย์</option>
+        </select>
+      </div></fieldset>
+
+      <div class="card p-4 mt-5" data-v-993c85a0>
+        <div class="d-flex"><h5>โอนเงินทางบัญชี</h5></div>
+        <fieldset class="form-group col-md-6"><legend class="col-form-label">สถานะการถอน</legend><div>
+          <select id="status" class="custom-select">
+            <option disabled value="">--- กรุณาเลือก ---</option>
+            <option value="success">สำเร็จ</option>
+            <option value="fail">ไม่สำเร็จ</option>
+          </select>
+        </div></fieldset>
+        <fieldset class="form-group col-md-6"><legend class="col-form-label">ชื่อธนาคาร</legend><div>
+          <select id="bank" class="custom-select">
+            <option disabled value="">--- กรุณาเลือก ---</option>
+            <option value="b1">ธนาคารกรุงไทย</option>
+            <option value="b2">ธนาคารออมสิน</option>
+            <option value="b3">ธนาคารกสิกรไทย</option>
+            <option value="b4">ธนาคารไทยพาณิชย์</option>
+          </select>
+        </div></fieldset>
+        <fieldset class="form-group col-md-6"><legend class="col-form-label">หมายเลขบัญชี</legend><div>
+          <select id="account" class="custom-select" disabled>
+            <option disabled value="">--- กรุณาเลือก ---</option>
+          </select>
+        </div></fieldset>
+      </div>
+
+      <script>
+        (function () {
+          var bank = document.getElementById('bank');
+          var acct = document.getElementById('account');
+          bank.addEventListener('change', function () {
+            if (bank.value) {
+              acct.disabled = false;
+              acct.innerHTML =
+                '<option disabled value="">--- กรุณาเลือก ---</option>' +
+                '<option value="a1">2262610449</option>';
+            }
+          });
+        })();
+      </script>
+    </body>`, { runScripts: 'dangerously' });
+  }
+
+  it('selects the modal bank <select>, not the top filter, and enables the account', async () => {
+    const dom = makeDom();
+    global.document = dom.window.document;
+
+    const bank = await selectOption(
+      {
+        action: 'select_option',
+        scope: 'popup',
+        scope_text: 'โอนเงินทางบัญชี',
+        field_hint: 'ชื่อธนาคาร',
+        value_from: 'slip.bank_name_th',
+        timeout_ms: 2000,
+      },
+      { slip: { bank_name_th: 'ธนาคารกสิกรไทย' } },
+      document
+    );
+    assert.equal(bank.ok, true, JSON.stringify(bank));
+    assert.equal(document.getElementById('bank').value, 'b3');
+    // Top filter bank must remain untouched.
+    assert.equal(document.getElementById('filter-bank').value, '');
+    // Bank change enabled the account select.
+    assert.equal(document.getElementById('account').disabled, false);
+
+    const acct = await selectOption(
+      {
+        action: 'select_option',
+        scope: 'popup',
+        scope_text: 'โอนเงินทางบัญชี',
+        field_hint: 'หมายเลขบัญชี',
+        fallback_match_pattern: '^[0-9]{8,}$',
+        timeout_ms: 2000,
+      },
+      {},
+      document
+    );
+    assert.equal(acct.ok, true, JSON.stringify(acct));
+    assert.equal(document.getElementById('account').value, 'a1');
+  });
+
+  it('maps slip bank code SCB → ธนาคารไทยพาณิชย์', async () => {
+    const dom = makeDom();
+    global.document = dom.window.document;
+    const bank = await selectOption(
+      {
+        action: 'select_option',
+        scope: 'popup',
+        scope_text: 'โอนเงินทางบัญชี',
+        field_hint: 'ชื่อธนาคาร',
+        value_from: 'slip.bank',
+        timeout_ms: 2000,
+      },
+      { slip: { bank: 'SCB' } },
+      document
+    );
+    assert.equal(bank.ok, true, JSON.stringify(bank));
+    assert.equal(document.getElementById('bank').value, 'b4');
+  });
+
+  it('refuses account step when bank still on placeholder', async () => {
+    const dom = makeDom();
+    global.document = dom.window.document;
+    // Bank stays on placeholder; manually enable account (simulate stale/loaded state).
+    document.getElementById('bank').value = '';
+    const acct = document.getElementById('account');
+    acct.disabled = false;
+    acct.innerHTML =
+      '<option disabled value="">--- กรุณาเลือก ---</option><option value="a1">2262610449</option>';
+    const res = await selectOption(
+      {
+        action: 'select_option',
+        scope: 'popup',
+        scope_text: 'โอนเงินทางบัญชี',
+        field_hint: 'หมายเลขบัญชี',
+        fallback_match_pattern: '^[0-9]{8,}$',
+        timeout_ms: 500,
+      },
+      {},
+      document
+    );
+    assert.equal(res.ok, false);
+    assert.equal(res.reason, 'bank_not_selected');
+  });
+
+  it('sets สถานะการถอน = สำเร็จ on the modal status select', async () => {
+    const dom = makeDom();
+    global.document = dom.window.document;
+    const res = await selectOption(
+      {
+        action: 'select_option',
+        scope: 'popup',
+        scope_text: 'โอนเงินทางบัญชี',
+        field_hint: 'สถานะการถอน',
+        match_text: 'สำเร็จ',
+        timeout_ms: 2000,
+      },
+      {},
+      document
+    );
+    assert.equal(res.ok, true, JSON.stringify(res));
+    assert.equal(document.getElementById('status').value, 'success');
+  });
+});

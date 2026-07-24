@@ -80,6 +80,7 @@
     {
       "action": "select_option",
       "scope": "popup",
+      "scope_text": "โอนเงินทางบัญชี",
       "field_hint": "สถานะการถอน",
       "match_text": "สำเร็จ",
       "timeout_ms": 5000
@@ -87,6 +88,7 @@
     {
       "action": "select_option",
       "scope": "popup",
+      "scope_text": "โอนเงินทางบัญชี",
       "field_hint": "ชื่อธนาคาร",
       "value_from": "slip.bank_name_th",
       "value_from_fallbacks": ["slip.bank_name", "slip.bank"],
@@ -95,19 +97,22 @@
     {
       "action": "wait_for",
       "scope": "popup",
+      "scope_text": "โอนเงินทางบัญชี",
       "match_text": "หมายเลขบัญชี",
       "timeout_ms": 5000
     },
     {
       "action": "select_option",
       "scope": "popup",
+      "scope_text": "โอนเงินทางบัญชี",
       "field_hint": "หมายเลขบัญชี",
       "fallback_match_pattern": "^[0-9]{8,}$",
-      "timeout_ms": 8000
+      "timeout_ms": 10000
     },
     {
       "action": "click",
       "scope": "popup",
+      "scope_text": "โอนเงินทางบัญชี",
       "match_text": "บันทึก"
     },
     {
