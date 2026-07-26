@@ -24,26 +24,38 @@ WithdrawNotifyHandleResult handleWithdrawNotifyMessage(
   return WithdrawNotifyHandleResult(ok: true, isNew: isNew);
 }
 
-bool handleSlipStatusMessage(Map<String, dynamic> msg, WithdrawQueue queue) {
-  if ((msg['type'] as String?) != 'slip_status') return false;
-  final orderId = (msg['order_id'] as String?)?.trim() ?? '';
-  if (orderId.isEmpty) return false;
+/// Apply slip_status to [queue]. Returns resolved order_id when applied, else null.
+String? handleSlipStatusMessage(Map<String, dynamic> msg, WithdrawQueue queue) {
+  if ((msg['type'] as String?) != 'slip_status') return null;
+  var orderId = (msg['order_id'] as String?)?.trim() ?? '';
+  // PC may emit amount push_id (1900.00) when scrape order_id was missing —
+  // resolve to the pending acct:… row by amount.
+  if (orderId.isEmpty || queue.stateOf(orderId) == null) {
+    final amount = (msg['amount'] as String?)?.trim() ?? '';
+    final amountKey =
+        amount.isNotEmpty ? amount : (orderId.isNotEmpty ? orderId : '');
+    final resolved = queue.findOrderIdByAmount(amountKey);
+    if (resolved != null) {
+      orderId = resolved;
+    }
+  }
+  if (orderId.isEmpty) return null;
   final stage = (msg['stage'] as String?)?.trim() ?? '';
   switch (stage) {
     case 'done':
       queue.markSucceeded(orderId);
-      return true;
+      return orderId;
     case 'processing':
     case 'received':
       queue.markProcessing(orderId);
-      return true;
+      return orderId;
     case 'failed':
       queue.markFailed(
         orderId,
         reason: (msg['reason'] as String?) ?? '',
       );
-      return true;
+      return orderId;
     default:
-      return false;
+      return null;
   }
 }

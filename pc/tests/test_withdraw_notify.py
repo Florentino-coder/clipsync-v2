@@ -264,6 +264,27 @@ def test_resolve_order_id_falls_back_to_pending_amount_match():
     )
 
 
+def test_resolve_order_id_ignores_amount_like_order_id():
+    """Confirm push_id is often the amount (1900.00) — must not become slip_status order_id."""
+    assert (
+        resolve_order_id_for_slip_status(
+            {"orderId": "1900.00", "matchKey": "1900.00", "amount": "1900.00"},
+            pending=[{"order_id": "acct:2982401081", "amount": "1900.00"}],
+        )
+        == "acct:2982401081"
+    )
+
+
+def test_resolve_order_id_keeps_acct_prefixed_id():
+    assert (
+        resolve_order_id_for_slip_status(
+            {"orderId": "acct:2982401081", "matchKey": "1900.00", "amount": "1900"},
+            pending=[{"order_id": "acct:2982401081", "amount": "1900.00"}],
+        )
+        == "acct:2982401081"
+    )
+
+
 def test_should_emit_slip_status_dedupes_within_2s():
     assert should_emit_slip_status(
         "j|o|done", job_id="j", order_id="o", stage="done", now=10.0, last_at=9.0

@@ -85,3 +85,19 @@ describe('formatApprovedSearchStatusLine', () => {
     assert.equal(line.tone, 'ok');
   });
 });
+
+describe('isApprovedSearchAutoEnabled', () => {
+  const { isApprovedSearchAutoEnabled } = require('../poll_settings.js');
+
+  it('defaults ON when unset', () => {
+    assert.equal(isApprovedSearchAutoEnabled(undefined), true);
+    assert.equal(isApprovedSearchAutoEnabled(null), true);
+    assert.equal(isApprovedSearchAutoEnabled(true), true);
+  });
+
+  it('is OFF only for explicit false-ish values', () => {
+    assert.equal(isApprovedSearchAutoEnabled(false), false);
+    assert.equal(isApprovedSearchAutoEnabled(0), false);
+    assert.equal(isApprovedSearchAutoEnabled('false'), false);
+  });
+});

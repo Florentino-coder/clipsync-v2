@@ -384,6 +384,12 @@ function showResultBanner(ok, detail) {
           return Math.min(300000, Math.max(10000, Math.round(n)));
         };
 
+  const isApprovedSearchAutoEnabled =
+    typeof ClipSyncPollSettings !== 'undefined' &&
+    typeof ClipSyncPollSettings.isApprovedSearchAutoEnabled === 'function'
+      ? ClipSyncPollSettings.isApprovedSearchAutoEnabled
+      : (value) => value !== false && value !== 0 && value !== 'false';
+
   let scrapeTimer = null;
   function schedulePendingScrape(profiles) {
     if (scrapeTimer) clearTimeout(scrapeTimer);
@@ -475,23 +481,36 @@ function showResultBanner(ok, detail) {
   function runApprovedSearchRefresh(profiles) {
     if (typeof E.maybeClickApprovedSearch !== 'function') return;
     syncWatchHudForProfiles(profiles);
-    for (const profile of activeProfiles(profiles)) {
-      const paused = approvedSearchIsPaused();
-      const result = paused
-        ? { clicked: false, reason: 'paused_for_confirm' }
-        : E.maybeClickApprovedSearch(profile, document, { confirmInFlight });
-      chrome.storage.local.get(['approvedSearchPollMs'], (data) => {
-        probeAndStoreSearchStatus(
-          [profile],
-          result,
-          data && data.approvedSearchPollMs
+    chrome.storage.local.get(
+      ['approvedSearchPollMs', 'approvedSearchAutoEnabled'],
+      (data) => {
+        const autoOn = isApprovedSearchAutoEnabled(
+          data && data.approvedSearchAutoEnabled
         );
-      });
-      // After a real Search click, wait for 「พบ: N」 to settle then scrape.
-      if (result && result.clicked) {
-        void settleThenScrape(profiles);
+        for (const profile of activeProfiles(profiles)) {
+          const paused = approvedSearchIsPaused();
+          let result;
+          if (!autoOn) {
+            result = { clicked: false, reason: 'auto_search_off' };
+          } else if (paused) {
+            result = { clicked: false, reason: 'paused_for_confirm' };
+          } else {
+            result = E.maybeClickApprovedSearch(profile, document, {
+              confirmInFlight,
+            });
+          }
+          probeAndStoreSearchStatus(
+            [profile],
+            result,
+            data && data.approvedSearchPollMs
+          );
+          // After a real Search click, wait for 「พบ: N」 to settle then scrape.
+          if (result && result.clicked) {
+            void settleThenScrape(profiles);
+          }
+        }
       }
-    }
+    );
   }
 
   async function settleThenScrape(profiles) {

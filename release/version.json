@@ -3,21 +3,21 @@
   "released_at": "2026-07-26",
   "note": "clipsync-v2 TEST pipeline only — production clipsync still uses android-latest on the other repo",
   "pc": {
-    "version": "0.9.18",
+    "version": "0.9.19",
     "installer_url": "https://github.com/Florentino-coder/clipsync-v2/releases/download/slip-test-latest/ClipSyncPC_Setup.exe",
     "portable_url": "https://github.com/Florentino-coder/clipsync-v2/releases/download/slip-test-latest/ClipSyncPC.exe",
     "required": false,
-    "notes": "0.9.18 durable withdraw seen ids; approved_at in notify; no username as account_name"
+    "notes": "0.9.19 slip_status resolve ignores amount-like orderId; map to acct: via pending amount"
   },
   "android": {
-    "version": "0.9.13+40",
+    "version": "0.9.15+42",
     "url": "https://github.com/Florentino-coder/clipsync-v2/releases/download/slip-test-latest/ClipSync-slip.apk",
     "required": false,
-    "notes": "0.9.13+40 five-field notify; no heads-up if already pending; swallow PlatformException; ATM icon"
+    "notes": "0.9.15+42 mute withdraw heads-up switch (queue/inbox keep syncing); clear pending amount fallback from 0.9.14+41"
   },
   "extension": {
-    "version": "1.0.50",
+    "version": "1.0.52",
     "download_url": "",
-    "notes": "1.0.50 approved-watch HUD; prefer role=approved tab for confirm routing"
+    "notes": "1.0.52 scrape prefers เลขบัญชี over username (09x bank vs 06x user); Search auto ON/OFF; HUD layout from 1.0.51"
   }
 }

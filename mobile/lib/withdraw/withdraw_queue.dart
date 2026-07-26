@@ -1,8 +1,10 @@
+import 'package:flutter/foundation.dart';
+
 import 'withdraw_order.dart';
 
 enum WithdrawItemState { pending, processing, done, failed }
 
-class WithdrawQueue {
+class WithdrawQueue extends ChangeNotifier {
   final Map<String, WithdrawOrder> _orders = {};
   final Map<String, WithdrawItemState> _states = {};
   final Map<String, String> _failReasons = {};
@@ -51,11 +53,13 @@ class WithdrawQueue {
       return false;
     }
     _states[order.orderId] = WithdrawItemState.pending;
+    notifyListeners();
     return wasNewPending;
   }
 
   void setActive(String orderId) {
     _activeOverride = orderId;
+    notifyListeners();
   }
 
   bool canCopy(String orderId) =>
@@ -77,12 +81,14 @@ class WithdrawQueue {
     if (!_orders.containsKey(orderId)) return;
     _states[orderId] = WithdrawItemState.processing;
     if (_activeOverride == orderId) _activeOverride = null;
+    notifyListeners();
   }
 
   void markSucceeded(String orderId) {
     if (!_orders.containsKey(orderId)) return;
     _states[orderId] = WithdrawItemState.done;
     if (_activeOverride == orderId) _activeOverride = null;
+    notifyListeners();
   }
 
   void markDone(String orderId) {
@@ -90,6 +96,7 @@ class WithdrawQueue {
     _states.remove(orderId);
     _failReasons.remove(orderId);
     if (_activeOverride == orderId) _activeOverride = null;
+    notifyListeners();
   }
 
   void markFailed(String orderId, {String reason = ''}) {
@@ -97,9 +104,41 @@ class WithdrawQueue {
     _states[orderId] = WithdrawItemState.failed;
     _failReasons[orderId] = reason;
     if (_activeOverride == orderId) _activeOverride = null;
+    notifyListeners();
   }
 
   WithdrawItemState? stateOf(String orderId) => _states[orderId];
+
+  /// Resolve queue order_id when slip_status carries amount push_id (e.g. `1900.00`).
+  /// Returns null when none or more than one pending/processing row matches.
+  String? findOrderIdByAmount(String amount) {
+    final keys = _amountKeys(amount);
+    if (keys.isEmpty) return null;
+    String? found;
+    for (final o in _orders.values) {
+      final state = _states[o.orderId];
+      if (state != WithdrawItemState.pending &&
+          state != WithdrawItemState.processing) {
+        continue;
+      }
+      final oKeys = _amountKeys(o.amount);
+      if (oKeys.intersection(keys).isEmpty) continue;
+      if (found != null) return null;
+      found = o.orderId;
+    }
+    return found;
+  }
+
+  static Set<String> _amountKeys(String raw) {
+    final text = raw.trim().replaceAll(',', '');
+    if (text.isEmpty) return {};
+    final keys = <String>{text};
+    final parsed = double.tryParse(text);
+    if (parsed != null) {
+      keys.add(parsed.toStringAsFixed(2));
+    }
+    return keys;
+  }
 
   void clearPending() {
     final ids = _orders.keys

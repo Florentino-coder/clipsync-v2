@@ -43,6 +43,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _busy = false;
   bool _checkingUpdate = false;
   bool _slipEnabled = false;
+  bool _withdrawHeadsUpEnabled = true;
   UpdateInfo? _updateInfo;
   String _lastClip = '';
   String _status = 'Not connected';
@@ -82,11 +83,15 @@ class _HomeScreenState extends State<HomeScreen> {
     final saved = p.getString('target_id') ?? '';
     final running = await FlutterForegroundTask.isRunningService;
     final slipEnabled = p.getBool(kSlipAutoConfirmPrefKey) ?? false;
+    final withdrawHeadsUp = isWithdrawNotifyHeadsUpEnabled(
+      p.getBool(kWithdrawNotifyHeadsUpPrefKey),
+    );
     setState(() {
       _ctrl.text = fmtId(saved);
       _targetId = saved.replaceAll('-', '');
       _running = running;
       _slipEnabled = slipEnabled;
+      _withdrawHeadsUpEnabled = withdrawHeadsUp;
       if (running && saved.isNotEmpty) {
         _status = 'Sync running';
       }
@@ -95,6 +100,16 @@ class _HomeScreenState extends State<HomeScreen> {
       _addEvent('Restored ${fmtId(saved)}');
       await _maybeStartSlipStack();
     }
+  }
+
+  Future<void> _setWithdrawHeadsUpEnabled(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(kWithdrawNotifyHeadsUpPrefKey, enabled);
+    if (!mounted) return;
+    setState(() {
+      _withdrawHeadsUpEnabled = enabled;
+    });
+    _addEvent(enabled ? 'Withdraw notify ON' : 'Withdraw notify muted');
   }
 
   Future<void> _setSlipEnabled(bool enabled) async {
@@ -254,14 +269,14 @@ class _HomeScreenState extends State<HomeScreen> {
       unawaited(
         WithdrawNotifyService.instance.syncFromQueue(
           _withdrawQueue,
-          allowHeadsUp: isNew,
+          allowHeadsUp: isNew && _withdrawHeadsUpEnabled,
           wasEmpty: wasEmpty,
         ),
       );
     } else if (type == 'slip_status') {
-      handleSlipStatusMessage(msg, _withdrawQueue);
+      final resolvedId = handleSlipStatusMessage(msg, _withdrawQueue);
       setState(() {});
-      final orderId = msg['order_id'] as String? ?? '';
+      final orderId = resolvedId ?? (msg['order_id'] as String? ?? '');
       final stage = msg['stage'] as String? ?? '';
       _addEvent('Slip status $stage $orderId');
       unawaited(
@@ -585,14 +600,14 @@ class _HomeScreenState extends State<HomeScreen> {
               _addEvent('Fallback withdraw $orderId');
               await WithdrawNotifyService.instance.syncFromQueue(
                 _withdrawQueue,
-                allowHeadsUp: handled.isNew,
+                allowHeadsUp: handled.isNew && _withdrawHeadsUpEnabled,
                 wasEmpty: wasEmpty,
               );
             } else if (type == 'slip_status') {
-              handleSlipStatusMessage(msg, _withdrawQueue);
+              final resolvedId = handleSlipStatusMessage(msg, _withdrawQueue);
               if (!mounted) return;
               setState(() {});
-              final orderId = msg['order_id'] as String? ?? '';
+              final orderId = resolvedId ?? (msg['order_id'] as String? ?? '');
               final stage = msg['stage'] as String? ?? '';
               _addEvent('Fallback slip status $stage $orderId');
               await WithdrawNotifyService.instance.syncFromQueue(
@@ -1037,6 +1052,21 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 value: _slipEnabled,
                 onChanged: _busy ? null : _setSlipEnabled,
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text(
+                  'แจ้งเตือนรายการถอน',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+                subtitle: Text(
+                  _withdrawHeadsUpEnabled
+                      ? 'Heads-up + เสียงเมื่อมีรายการถอนใหม่'
+                      : 'ปิด heads-up/เสียง — คิวและ inbox ยังอัปเดต',
+                  style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
+                ),
+                value: _withdrawHeadsUpEnabled,
+                onChanged: _busy ? null : (v) => unawaited(_setWithdrawHeadsUpEnabled(v)),
               ),
               const SizedBox(height: 8),
               SizedBox(

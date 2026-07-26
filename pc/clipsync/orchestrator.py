@@ -26,6 +26,7 @@ from clipsync.withdraw_notify import (
     build_slip_status_payload,
     build_withdraw_notify_payload,
     new_orders_since,
+    resolve_order_id_for_slip_status,
 )
 
 logger = logging.getLogger(__name__)
@@ -519,10 +520,18 @@ class SlipOrchestrator:
                 if ref is not None:
                     self._used_refs.add(str(ref))
                     save_used_refs(self._used_refs, self._used_refs_path)
+                status_order_id = order_id or resolve_order_id_for_slip_status(
+                    {
+                        "orderId": push_id,
+                        "amount": amount_key or amount,
+                        "matchKey": amount_key or amount,
+                    },
+                    pending=self._pending_orders,
+                )
                 self._emit_slip_status(
                     build_slip_status_payload(
                         job_id=event_id,
-                        order_id=order_id,
+                        order_id=status_order_id,
                         amount=event_data.get("amount"),
                         stage="done",
                     )

@@ -15,6 +15,12 @@ const kWithdrawChannelName = 'Withdraw alerts';
 const kCopyAmountActionId = 'copy_amount';
 const kCopyAccountActionId = 'copy_account';
 
+/// SharedPreferences: when false, keep queue/inbox sync but mute heads-up/sound.
+const kWithdrawNotifyHeadsUpPrefKey = 'withdraw_notify_heads_up';
+
+/// Default ON when pref unset. OFF only when explicitly stored as false.
+bool isWithdrawNotifyHeadsUpEnabled(bool? stored) => stored ?? true;
+
 /// Pure throttle helper — full heads-up if queue was empty or last heads-up ≥4s ago.
 bool shouldHeadsUp({
   required bool wasEmpty,

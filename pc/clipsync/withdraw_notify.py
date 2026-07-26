@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from typing import Any, Mapping, Sequence
 
@@ -83,6 +84,20 @@ def build_slip_status_payload(
     }
 
 
+_AMOUNT_KEY_RE = re.compile(r"^\d{1,7}(\.\d{1,2})?$")
+
+
+def looks_like_amount_order_id(value: Any) -> bool:
+    """True when confirm push_id is money (e.g. 1900 / 1900.00), not acct:/ref id.
+
+    Account digits are 9–12 long; money keys from amount push stay ≤7 integer digits.
+    """
+    text = str(value or "").strip().replace(",", "").replace(" ", "")
+    if not text or text.lower().startswith("acct:"):
+        return False
+    return bool(_AMOUNT_KEY_RE.fullmatch(text))
+
+
 def resolve_order_id_for_slip_status(
     data: Mapping[str, Any],
     *,
@@ -90,7 +105,7 @@ def resolve_order_id_for_slip_status(
 ) -> str:
     for key in ("order_id", "orderId"):
         val = str(data.get(key) or "").strip()
-        if val and val not in ("-", "None"):
+        if val and val not in ("-", "None") and not looks_like_amount_order_id(val):
             return val
     amount_keys: set[str] = set()
     for key in ("amount", "matchKey"):
@@ -103,6 +118,15 @@ def resolve_order_id_for_slip_status(
             amount_keys.add(f"{float(text.replace(',', '')):.2f}")
         except (TypeError, ValueError):
             pass
+    # Amount-like orderId/order_id also participates in amount matching.
+    for key in ("order_id", "orderId"):
+        val = str(data.get(key) or "").strip()
+        if looks_like_amount_order_id(val):
+            amount_keys.add(val)
+            try:
+                amount_keys.add(f"{float(val.replace(',', '')):.2f}")
+            except (TypeError, ValueError):
+                pass
     for order in pending or ():
         oid = str(order.get("order_id") or "").strip()
         if not oid:

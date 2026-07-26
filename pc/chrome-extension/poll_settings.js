@@ -29,6 +29,12 @@
     return clampPollMs(value, fallback);
   }
 
+  /** Default ON when unset. Explicit false / 'false' / 0 → OFF. */
+  function isApprovedSearchAutoEnabled(value) {
+    if (value === false || value === 0 || value === 'false') return false;
+    return true;
+  }
+
   /**
    * Popup line for chrome.storage.local.approvedSearchStatus.
    */
@@ -57,6 +63,7 @@
       paused_for_confirm: 'พักรีเฟรช (กำลังยืนยัน/สลิป)',
       confirm_in_flight: 'พักรีเฟรช (กำลังยืนยัน)',
       busy: 'พักรีเฟรช (busy)',
+      auto_search_off: 'ปิดกดค้นหาอัตโนมัติ',
       clicked: 'clicked',
       probed: 'probed',
     };
@@ -85,6 +92,7 @@
   return {
     clampPendingOrdersPollMs,
     clampApprovedSearchPollMs,
+    isApprovedSearchAutoEnabled,
     formatApprovedSearchStatusLine,
     DEFAULT_SCRAPE_POLL_MS,
     DEFAULT_APPROVED_SEARCH_POLL_MS,

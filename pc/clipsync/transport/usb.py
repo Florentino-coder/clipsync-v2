@@ -116,7 +116,12 @@ class UsbTransport:
                 payload = data.get("payload")
                 if not isinstance(payload, dict) or self._on_slip_event is None:
                     continue
-                result = self._on_slip_event(payload)
+                # Thumbnail lives outside the signed OCR payload (mobile outbox).
+                event = dict(payload)
+                thumb = data.get("thumbnail_jpeg_b64")
+                if isinstance(thumb, str) and thumb:
+                    event["thumbnail_jpeg_b64"] = thumb
+                result = self._on_slip_event(event)
                 if asyncio.iscoroutine(result):
                     await result
         except websockets.ConnectionClosed:

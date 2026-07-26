@@ -33,6 +33,31 @@ class WithdrawInboxPage extends StatefulWidget {
 }
 
 class _WithdrawInboxPageState extends State<WithdrawInboxPage> {
+  @override
+  void initState() {
+    super.initState();
+    widget.queue.addListener(_onQueueChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant WithdrawInboxPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.queue != widget.queue) {
+      oldWidget.queue.removeListener(_onQueueChanged);
+      widget.queue.addListener(_onQueueChanged);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.queue.removeListener(_onQueueChanged);
+    super.dispose();
+  }
+
+  void _onQueueChanged() {
+    if (mounted) setState(() {});
+  }
+
   String _stateLabel(WithdrawItemState? state) {
     switch (state) {
       case WithdrawItemState.pending:

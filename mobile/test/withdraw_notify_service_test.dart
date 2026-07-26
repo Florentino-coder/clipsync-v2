@@ -48,6 +48,12 @@ void main() {
     );
   });
 
+  test('isWithdrawNotifyHeadsUpEnabled defaults ON when unset', () {
+    expect(isWithdrawNotifyHeadsUpEnabled(null), isTrue);
+    expect(isWithdrawNotifyHeadsUpEnabled(true), isTrue);
+    expect(isWithdrawNotifyHeadsUpEnabled(false), isFalse);
+  });
+
   test('encodeWithdrawNotifyPayload round-trips active fields', () {
     final json = encodeWithdrawNotifyPayload(
       orderId: 'ORD-1',

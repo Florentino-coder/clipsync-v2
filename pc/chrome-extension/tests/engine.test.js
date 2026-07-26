@@ -308,6 +308,38 @@ describe('deepFindByText + findRow + findConfirmButton', () => {
     assert.match(String(orders[0].approved_at || ''), /26\/07\/2026 16:05:51/);
   });
 
+  it('scrapePendingOrders prefers labeled 09x bank acct over 06x username (Jinbao money-safety)', () => {
+    // Regression: old ^0[89] penalty treated bank 0958… as phone and username 0625… won.
+    const dom = new JSDOM(`<!DOCTYPE html><body>
+      <div class="el-tabs__item is-active">รายการที่อนุมัติแล้ว</div>
+      <table class="el-table"><tbody>
+        <tr class="el-table__row">
+          <td>1</td>
+          <td>
+            <div>ยูสเซอร์เนม 0625101707</div>
+            <div>ชื่อธนาคาร ธนาคารกสิกรไทย</div>
+            <div>ชื่อบัญชีธนาคาร สมชาย ใจดี</div>
+            <div>เลขบัญชีธนาคาร 0958631359</div>
+          </td>
+          <td>1201</td>
+          <td>ถอน : 26/07/2026 18:01:00 อนุมัติ : 26/07/2026 18:01:30</td>
+          <td>อนุมัติแล้ว</td>
+        </tr>
+      </tbody></table>
+    </body>`);
+    global.document = dom.window.document;
+    const profile = {
+      profile_id: 'jinbao356_v1',
+      row_selector_hints: ['tr.el-table__row', 'tbody tr'],
+    };
+    const orders = scrapePendingOrders(profile);
+    assert.equal(orders.length, 1, JSON.stringify(orders));
+    assert.equal(orders[0].amount, '1201');
+    assert.equal(orders[0].account, '0958631359');
+    assert.notEqual(orders[0].account, '0625101707');
+    assert.equal(orders[0].account_last4, '1359');
+  });
+
   it('scrapePendingOrders accepts whole-baht amounts on approved rows', () => {
     const dom = new JSDOM(`<!DOCTYPE html><body>
       <div class="el-tabs__item is-active">รายการที่อนุมัติแล้ว</div>
@@ -2191,7 +2223,7 @@ describe('results count settle helpers', () => {
 });
 
 describe('approved watch HUD', () => {
-  it('showApprovedWatchHud creates green bottom-left monospace badge', () => {
+  it('showApprovedWatchHud creates green bottom-right monospace badge', () => {
     const dom = new JSDOM(`<!DOCTYPE html><body></body>`);
     const document = dom.window.document;
     const hud = showApprovedWatchHud(document);
@@ -2203,7 +2235,8 @@ describe('approved watch HUD', () => {
     );
     assert.match(hud.getAttribute('style') || '', /position:\s*fixed/);
     assert.match(hud.getAttribute('style') || '', /bottom:\s*8px/);
-    assert.match(hud.getAttribute('style') || '', /left:\s*8px/);
+    assert.match(hud.getAttribute('style') || '', /right:\s*8px/);
+    assert.doesNotMatch(hud.getAttribute('style') || '', /(?:^|;)\s*left:\s*/);
     assert.match(hud.getAttribute('style') || '', /color:\s*#0f0/);
     assert.match(hud.getAttribute('style') || '', /border:\s*1px solid #0f0/);
     assert.match(hud.getAttribute('style') || '', /monospace/);

@@ -51,7 +51,7 @@ void main() {
       accountName: '',
       ts: 1,
     ));
-    final ok = handleSlipStatusMessage({
+    final resolved = handleSlipStatusMessage({
       'type': 'slip_status',
       'job_id': 'j',
       'order_id': 'X',
@@ -59,13 +59,37 @@ void main() {
       'message_th': 'สำเร็จ',
       'ts': 3,
     }, q);
-    expect(ok, isTrue);
+    expect(resolved, 'X');
     expect(q.stateOf('X'), WithdrawItemState.done);
     expect(q.canCopy('X'), isFalse);
   });
 
+  test('handleSlipStatusMessage done falls back to amount when order_id mismatches', () {
+    final q = WithdrawQueue();
+    q.upsert(WithdrawOrder(
+      orderId: 'acct:2982401081',
+      amount: '1900.00',
+      account: '2982401081',
+      bank: 'KBANK',
+      accountName: '',
+      ts: 1,
+    ));
+    final resolved = handleSlipStatusMessage({
+      'type': 'slip_status',
+      'job_id': 'evt-1',
+      'order_id': '1900.00',
+      'amount': '1900.00',
+      'stage': 'done',
+      'message_th': 'สำเร็จ',
+      'ts': 3,
+    }, q);
+    expect(resolved, 'acct:2982401081');
+    expect(q.stateOf('acct:2982401081'), WithdrawItemState.done);
+    expect(q.pending, isEmpty);
+  });
+
   test('handleSlipStatusMessage ignores wrong type', () {
     final q = WithdrawQueue();
-    expect(handleSlipStatusMessage({'type': 'clip'}, q), isFalse);
+    expect(handleSlipStatusMessage({'type': 'clip'}, q), isNull);
   });
 }

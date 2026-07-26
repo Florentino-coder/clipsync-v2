@@ -184,11 +184,15 @@
       </section>
 
       <section>
+        <label class="toggle" style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+          <input id="searchAutoEnabled" type="checkbox" checked />
+          <span>กดค้นหาอัตโนมัติ (Search auto)</span>
+        </label>
         <label>
           รีเฟรชหน้าอนุมัติแล้ว — กดค้นหา (วินาที)
           <input id="searchSeconds" type="number" min="10" max="300" step="5" />
         </label>
-        <p class="muted">บังคับโหลดตารางใหม่โดยกด「ค้นหา」 — ฟิลเตอร์ยอดถอน/วันที่คงอยู่ (10–300 วินาที)</p>
+        <p class="muted">บังคับโหลดตารางใหม่โดยกด「ค้นหา」 — ฟิลเตอร์ยอดถอน/วันที่คงอยู่ (10–300 วินาที). ปิดสวิตช์ด้านบน = ไม่กดค้นหาอัตโนมัติ (scrape/HUD ยังทำงาน)</p>
         <div class="row" id="searchPresets">
           <button type="button" data-sec="15">15s</button>
           <button type="button" data-sec="30">30s</button>

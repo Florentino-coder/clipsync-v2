@@ -17,6 +17,7 @@ const saveSearchPollBtn = document.getElementById('saveSearchPoll');
 const saveScrapeFlashEl = document.getElementById('saveScrapeFlash');
 const saveSearchFlashEl = document.getElementById('saveSearchFlash');
 const searchBtnStatusEl = document.getElementById('searchBtnStatus');
+const searchAutoEnabledEl = document.getElementById('searchAutoEnabled');
 
 const clampPendingOrdersPollMs =
   typeof ClipSyncPollSettings !== 'undefined'
@@ -35,6 +36,12 @@ const clampApprovedSearchPollMs =
         if (!Number.isFinite(n)) return fallback;
         return Math.min(300000, Math.max(10000, Math.round(n)));
       };
+
+const isApprovedSearchAutoEnabled =
+  typeof ClipSyncPollSettings !== 'undefined' &&
+  typeof ClipSyncPollSettings.isApprovedSearchAutoEnabled === 'function'
+    ? ClipSyncPollSettings.isApprovedSearchAutoEnabled
+    : (value) => value !== false && value !== 0 && value !== 'false';
 
 const formatApprovedSearchStatusLine =
   typeof ClipSyncPollSettings !== 'undefined' &&
@@ -88,11 +95,15 @@ function renderPollSettings(pendingOrdersPollMs) {
   );
 }
 
-function renderSearchSettings(approvedSearchPollMs) {
-  if (!searchSecondsEl) return;
-  searchSecondsEl.value = String(
-    msToSeconds(approvedSearchPollMs, clampApprovedSearchPollMs)
-  );
+function renderSearchSettings(approvedSearchPollMs, approvedSearchAutoEnabled) {
+  if (searchSecondsEl) {
+    searchSecondsEl.value = String(
+      msToSeconds(approvedSearchPollMs, clampApprovedSearchPollMs)
+    );
+  }
+  if (searchAutoEnabledEl) {
+    searchAutoEnabledEl.checked = isApprovedSearchAutoEnabled(approvedSearchAutoEnabled);
+  }
 }
 
 function renderSearchBtnStatus(status) {
@@ -131,19 +142,28 @@ function saveSearchSettings() {
   const sec = Number(searchSecondsEl.value);
   const ms = clampApprovedSearchPollMs(sec * 1000);
   const shownSec = msToSeconds(ms, clampApprovedSearchPollMs);
-  chrome.storage.local.set({ approvedSearchPollMs: ms }, () => {
-    renderSearchSettings(ms);
-    searchFlashTimer = showFlash(
-      saveSearchFlashEl,
-      `✓ บันทึกแล้ว (${shownSec}s)`,
-      searchFlashTimer
-    );
-    try {
-      window.alert(`บันทึกแล้ว: รีเฟรชหน้าทุก ${shownSec} วินาที`);
-    } catch (_) {
-      /* ignore */
+  const autoOn = searchAutoEnabledEl ? Boolean(searchAutoEnabledEl.checked) : true;
+  chrome.storage.local.set(
+    { approvedSearchPollMs: ms, approvedSearchAutoEnabled: autoOn },
+    () => {
+      renderSearchSettings(ms, autoOn);
+      const mode = autoOn ? 'กดค้นหาอัตโนมัติเปิด' : 'กดค้นหาอัตโนมัติปิด';
+      searchFlashTimer = showFlash(
+        saveSearchFlashEl,
+        `✓ บันทึกแล้ว (${shownSec}s, ${mode})`,
+        searchFlashTimer
+      );
+      try {
+        window.alert(
+          autoOn
+            ? `บันทึกแล้ว: รีเฟรชหน้าทุก ${shownSec} วินาที`
+            : `บันทึกแล้ว: ปิดกดค้นหาอัตโนมัติ (scrape/HUD ยังทำงาน)`
+        );
+      } catch (_) {
+        /* ignore */
+      }
     }
-  });
+  );
 }
 
 function renderStatus(status) {
@@ -204,6 +224,7 @@ function refresh() {
       'siteProfiles',
       'pendingOrdersPollMs',
       'approvedSearchPollMs',
+      'approvedSearchAutoEnabled',
       'approvedSearchStatus',
     ],
     (data) => {
@@ -216,7 +237,8 @@ function refresh() {
       renderSearchSettings(
         data.approvedSearchPollMs != null
           ? data.approvedSearchPollMs
-          : DEFAULT_SEARCH_POLL_MS
+          : DEFAULT_SEARCH_POLL_MS,
+        data.approvedSearchAutoEnabled
       );
       renderSearchBtnStatus(data.approvedSearchStatus || null);
       requestFreshSearchStatus();
@@ -267,7 +289,18 @@ chrome.storage.onChanged.addListener((changes, area) => {
     renderPollSettings(changes.pendingOrdersPollMs.newValue);
   }
   if (changes.approvedSearchPollMs) {
-    renderSearchSettings(changes.approvedSearchPollMs.newValue);
+    renderSearchSettings(
+      changes.approvedSearchPollMs.newValue,
+      searchAutoEnabledEl ? searchAutoEnabledEl.checked : true
+    );
+  }
+  if (changes.approvedSearchAutoEnabled) {
+    renderSearchSettings(
+      searchSecondsEl
+        ? clampApprovedSearchPollMs(Number(searchSecondsEl.value) * 1000)
+        : DEFAULT_SEARCH_POLL_MS,
+      changes.approvedSearchAutoEnabled.newValue
+    );
   }
   if (changes.approvedSearchStatus) {
     renderSearchBtnStatus(changes.approvedSearchStatus.newValue || null);

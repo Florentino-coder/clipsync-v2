@@ -736,13 +736,27 @@
       return m2 ? m2[1].trim() : '';
     }
 
+    // Real bank accts can be 09x; usernames can be 06x — never use ^0[89] as "not account".
+    const usernameLabeledRe =
+      /(?:ยูส(?:เซอร์)?(?:เนม)?|username)\s*[:：]?\s*(\d{9,12})/gi;
+    const accountLabeledRe = /เลขบัญชี(?:ธนาคาร)?\s*[:：]?\s*(\d{9,12})/gi;
+
+    function collectLabeledDigits(src, re) {
+      const out = new Set();
+      const text = String(src || '');
+      re.lastIndex = 0;
+      let m;
+      while ((m = re.exec(text)) !== null) {
+        if (m[1]) out.add(m[1]);
+      }
+      return out;
+    }
+
     function scoreAccountCandidate(digits, meta) {
       let score = 0;
       if (meta.fromDigitOnlyCell) score += 5;
       if (meta.nearBank) score += 4;
       if (meta.hasAccountLabel) score += 6;
-      // Username phones are usually 08x/09x; bank accounts often 0[1-7]x (incl. 06).
-      if (/^0[89]/.test(digits)) score -= 3;
       if (digits.length >= 10 && digits.length <= 12) score += 1;
       return score;
     }
@@ -808,12 +822,17 @@
       }
       if (!ref && cells.length > 0) ref = (cells[0].textContent || '').trim();
 
-      // Member account: score candidates — prefer bank account over username phone.
+      // Member account: prefer digits under เลขบัญชี; never use ยูสเซอร์เนม/username digits.
       const amountDigits = amountStr.replace(/\D/g, '');
+      const labeledAccounts = collectLabeledDigits(text, accountLabeledRe);
+      const labeledUsernames = collectLabeledDigits(text, usernameLabeledRe);
+      const preferLabeledOnly = labeledAccounts.size > 0;
       let account = '';
       let bestScore = -999;
       function considerAccount(digits, meta) {
         if (digits.length < 9 || digits.length > 12 || digits === amountDigits) return;
+        if (labeledUsernames.has(digits)) return;
+        if (preferLabeledOnly && !labeledAccounts.has(digits)) return;
         const score = scoreAccountCandidate(digits, meta || {});
         if (score > bestScore || (score === bestScore && digits.length > account.length)) {
           bestScore = score;
@@ -826,7 +845,8 @@
         const digitsOnly = t.replace(/\D/g, '');
         const fromDigitOnly = /^\d[\d\s-]*$/.test(t) && digitsOnly.length >= 9;
         const nearBank = isBankAliasCell(t) || /ธนาคาร|เลขบัญชี|ชื่อบัญชี/.test(t);
-        const hasAccountLabel = /เลขบัญชี/.test(t);
+        const cellLabeledAccounts = collectLabeledDigits(t, accountLabeledRe);
+        const hasAccountLabel = cellLabeledAccounts.size > 0 || /เลขบัญชี/.test(t);
         // Prefer a single contiguous digit run; avoid gluing phone+account.
         const runs = t.match(/\d{9,12}/g) || [];
         if (runs.length) {
@@ -834,14 +854,14 @@
             considerAccount(run, {
               fromDigitOnlyCell: fromDigitOnly && runs.length === 1,
               nearBank,
-              hasAccountLabel,
+              hasAccountLabel: hasAccountLabel && cellLabeledAccounts.has(run),
             });
           }
         } else if (digitsOnly.length >= 9 && digitsOnly.length <= 12) {
           considerAccount(digitsOnly, {
             fromDigitOnlyCell: fromDigitOnly,
             nearBank,
-            hasAccountLabel,
+            hasAccountLabel: hasAccountLabel && cellLabeledAccounts.has(digitsOnly),
           });
         }
       }
@@ -849,7 +869,9 @@
         let m;
         accountRe.lastIndex = 0;
         while ((m = accountRe.exec(text)) !== null) {
-          considerAccount(m[1], {});
+          considerAccount(m[1], {
+            hasAccountLabel: labeledAccounts.has(m[1]),
+          });
         }
       }
 
@@ -1062,7 +1084,8 @@
           hud.id = 'clipsync-dismiss-hud';
           hud.setAttribute(
             'style',
-            'position:fixed;left:8px;bottom:8px;z-index:2147483647;max-width:70vw;' +
+            // Top-right — keep clear of approved-watch HUD (bottom-right).
+            'position:fixed;right:8px;top:8px;z-index:2147483647;max-width:70vw;' +
               'background:#111;color:#0f0;font:12px/1.35 monospace;padding:8px 10px;' +
               'border:1px solid #0f0;border-radius:6px;opacity:0.92;pointer-events:none;'
           );
@@ -3317,7 +3340,8 @@
       hud.id = APPROVED_WATCH_HUD_ID;
       hud.setAttribute(
         'style',
-        'position:fixed;left:8px;bottom:8px;z-index:2147483646;max-width:78vw;' +
+        // Bottom-right — keep clear of dismiss debug HUD (top-right) and Jinbao left menu.
+        'position:fixed;right:8px;bottom:8px;z-index:2147483646;max-width:78vw;' +
           'background:#111;color:#0f0;font:12px/1.35 monospace;padding:8px 10px;' +
           'border:1px solid #0f0;border-radius:6px;opacity:0.92;pointer-events:none;'
       );
