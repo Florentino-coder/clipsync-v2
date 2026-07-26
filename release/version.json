@@ -10,10 +10,10 @@
     "notes": "0.9.16 pause Search + request scrape on slip; retry no_match within 4s"
   },
   "android": {
-    "version": "0.9.10+37",
+    "version": "0.9.11+38",
     "url": "https://github.com/Florentino-coder/clipsync-v2/releases/download/slip-test-latest/ClipSync-slip.apk",
     "required": false,
-    "notes": "0.9.10+37 shade shows up to 20 withdraw notifies (group), each with copy actions"
+    "notes": "Slip OCR: จาก/ไปยัง by vertical account order (HIGH vs NEEDS_REVIEW); no single-masked guess."
   },
   "extension": {
     "version": "1.0.48",
