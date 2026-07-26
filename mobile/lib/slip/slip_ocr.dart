@@ -1,13 +1,32 @@
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 
+class OcrLine {
+  final String text;
+  final int yTop;
+  const OcrLine({required this.text, required this.yTop});
+}
+
+List<OcrLine> linesFromRawText(String raw) {
+  final out = <OcrLine>[];
+  final rows = raw.split('\n');
+  for (var i = 0; i < rows.length; i++) {
+    final t = rows[i].trim();
+    if (t.isEmpty) continue;
+    out.add(OcrLine(text: t, yTop: i * 100));
+  }
+  return out;
+}
+
 /// OCR result from a slip image.
 class SlipOcrResult {
   final String rawText;
   final double confidence;
+  final List<OcrLine> lines;
 
   const SlipOcrResult({
     required this.rawText,
     required this.confidence,
+    this.lines = const [],
   });
 }
 
@@ -28,9 +47,19 @@ class MlKitSlipOcr implements SlipOcr {
   Future<SlipOcrResult> run(String imagePath) async {
     final inputImage = InputImage.fromFilePath(imagePath);
     final recognized = await _recognizer.processImage(inputImage);
+    final lineBoxes = <OcrLine>[];
+    for (final block in recognized.blocks) {
+      for (final line in block.lines) {
+        final top = line.boundingBox?.top;
+        if (top == null) continue;
+        lineBoxes.add(OcrLine(text: line.text, yTop: top.round()));
+      }
+    }
+    lineBoxes.sort((a, b) => a.yTop.compareTo(b.yTop));
     return SlipOcrResult(
       rawText: recognized.text,
       confidence: _averageConfidence(recognized),
+      lines: lineBoxes.isEmpty ? linesFromRawText(recognized.text) : lineBoxes,
     );
   }
 
