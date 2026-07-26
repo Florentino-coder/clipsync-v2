@@ -33,6 +33,21 @@ void main() {
       expect(json['amount'], 350.0);
       expect(json['parse_failed'], isFalse);
     });
+
+    test('SlipEvent JSON includes account_parse_confidence', () {
+      final event = SlipEvent(
+        eventId: '550e8400-e29b-41d4-a716-446655440000',
+        capturedAt: '2026-07-22T17:00:00+07:00',
+        bank: 'SCB',
+        amount: 350.0,
+        ocrConfidence: 0.9,
+        parseFailed: true,
+        accountParseConfidence: 'needs_review',
+        localImagePath: '/tmp/x.jpg',
+      );
+      expect(event.toJson()['account_parse_confidence'], 'needs_review');
+      expect(event.toJson()['parse_failed'], isTrue);
+    });
   });
 
   group('ScbParser', () {

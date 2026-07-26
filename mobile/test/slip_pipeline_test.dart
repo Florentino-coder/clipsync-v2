@@ -19,7 +19,11 @@ class FakeSlipOcr implements SlipOcr {
   @override
   Future<SlipOcrResult> run(String imagePath) async {
     seenPaths.add(imagePath);
-    return SlipOcrResult(rawText: rawText, confidence: confidence);
+    return SlipOcrResult(
+      rawText: rawText,
+      confidence: confidence,
+      lines: linesFromRawText(rawText),
+    );
   }
 }
 

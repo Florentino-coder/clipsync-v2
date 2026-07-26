@@ -12,6 +12,8 @@ class SlipEvent {
   final String? refNumber;
   final double ocrConfidence;
   final bool parseFailed;
+  /// `high` | `needs_review` — position-based จาก/ไปยัง confidence.
+  final String? accountParseConfidence;
   final String localImagePath;
 
   const SlipEvent({
@@ -28,6 +30,7 @@ class SlipEvent {
     this.refNumber,
     required this.ocrConfidence,
     required this.parseFailed,
+    this.accountParseConfidence,
     required this.localImagePath,
   });
 
@@ -45,5 +48,7 @@ class SlipEvent {
         'ref_number': refNumber,
         'ocr_confidence': ocrConfidence,
         'parse_failed': parseFailed,
+        if (accountParseConfidence != null)
+          'account_parse_confidence': accountParseConfidence,
       };
 }

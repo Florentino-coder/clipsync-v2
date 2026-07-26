@@ -2,6 +2,7 @@ import 'package:uuid/uuid.dart';
 
 import 'outbox.dart';
 import 'parsers/parser_registry.dart';
+import 'parsers/slip_account_parser.dart';
 import 'slip_content_uri.dart';
 import 'slip_event.dart';
 import 'slip_ocr.dart';
@@ -73,7 +74,10 @@ class SlipPipeline {
     }
 
     final ocrResult = await _ocr.run(imagePath);
-    final (bank, parsed) = ParserRegistry.parseAny(ocrResult.rawText);
+    final (bank, parsed) = ParserRegistry.parseAny(
+      ocrResult.rawText,
+      lines: ocrResult.lines,
+    );
 
     final slipEvent = SlipEvent(
       eventId: _uuid.v4(),
@@ -89,6 +93,10 @@ class SlipPipeline {
       refNumber: parsed.refNumber,
       ocrConfidence: ocrResult.confidence,
       parseFailed: !parsed.valid,
+      accountParseConfidence:
+          parsed.accountConfidence == SlipAccountConfidence.high
+              ? 'high'
+              : 'needs_review',
       localImagePath: imagePath,
     );
 
