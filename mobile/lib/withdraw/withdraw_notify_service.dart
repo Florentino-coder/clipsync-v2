@@ -112,6 +112,7 @@ String formatWithdrawNotifyBody({
 }
 
 /// Shared notify + inbox display lines (emoji + Thai labels).
+/// Product order: bank → account name → account number → amount → approved_at.
 List<String> formatWithdrawInboxLines({
   required String amount,
   required String account,
@@ -121,26 +122,28 @@ List<String> formatWithdrawInboxLines({
   String? withdrawAt,
   String? approvedAt,
 }) {
-  final lines = <String>[
-    '💰 ยอด: $amount',
-    '🏦 บัญชี: $account',
-  ];
+  final lines = <String>[];
   final bankLabel = bank.trim();
   if (bankLabel.isNotEmpty) {
     lines.add('🏧 ธนาคาร: $bankLabel');
   }
   final name = accountName.trim();
   if (name.isNotEmpty) {
-    lines.add('👤 ชื่อ: $name');
+    lines.add('👤 ชื่อบัญชี: $name');
   }
-  final withdraw = withdrawAt?.trim() ?? '';
-  if (withdraw.isNotEmpty) {
-    lines.add('🕒 ถอน: $withdraw');
+  final acct = account.trim();
+  if (acct.isNotEmpty) {
+    lines.add('🏦 เลขบัญชี: $acct');
+  }
+  final amt = amount.trim();
+  if (amt.isNotEmpty) {
+    lines.add('💰 จำนวนเงิน: $amt');
   }
   final approved = approvedAt?.trim() ?? '';
   if (approved.isNotEmpty) {
     lines.add('✅ อนุมัติ: $approved');
   }
+  // withdrawAt intentionally omitted from notify/inbox body (product: 5 fields).
   final state = stateLabel?.trim() ?? '';
   if (state.isNotEmpty) {
     lines.add(state);
@@ -279,6 +282,7 @@ class WithdrawNotifyService {
           account: o.account,
           bank: o.bank,
           accountName: o.accountName,
+          approvedAt: o.approvedAt,
         ),
         'title': 'รายการถอนใหม่',
         'canCopy': q.canCopy(o.orderId),

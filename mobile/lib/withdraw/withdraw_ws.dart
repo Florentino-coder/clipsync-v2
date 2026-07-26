@@ -7,10 +7,21 @@ class WithdrawQueueStore {
   static final WithdrawQueue instance = WithdrawQueue();
 }
 
-bool handleWithdrawNotifyMessage(Map<String, dynamic> msg, WithdrawQueue queue) {
-  if ((msg['type'] as String?) != 'withdraw_notify') return false;
-  queue.upsert(WithdrawOrder.fromRelayJson(msg));
-  return true;
+class WithdrawNotifyHandleResult {
+  const WithdrawNotifyHandleResult({required this.ok, required this.isNew});
+  final bool ok;
+  final bool isNew;
+}
+
+WithdrawNotifyHandleResult handleWithdrawNotifyMessage(
+  Map<String, dynamic> msg,
+  WithdrawQueue queue,
+) {
+  if ((msg['type'] as String?) != 'withdraw_notify') {
+    return const WithdrawNotifyHandleResult(ok: false, isNew: false);
+  }
+  final isNew = queue.upsert(WithdrawOrder.fromRelayJson(msg));
+  return WithdrawNotifyHandleResult(ok: true, isNew: isNew);
 }
 
 bool handleSlipStatusMessage(Map<String, dynamic> msg, WithdrawQueue queue) {

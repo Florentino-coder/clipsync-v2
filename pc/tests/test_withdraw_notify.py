@@ -90,8 +90,73 @@ def test_build_withdraw_notify_payload_fields():
         "account": "4774090171",
         "bank": "KBANK",
         "account_name": "A",
+        "approved_at": "",
         "ts": 1720000000,
     }
+
+
+def test_build_withdraw_notify_payload_includes_approved_at():
+    payload = build_withdraw_notify_payload(
+        {
+            "order_id": "W-1",
+            "amount": 100,
+            "account": "0618407497",
+            "bank": "KBANK",
+            "account_name": "สมชาย",
+            "approved_at": "26/07/2026 15:31",
+        },
+        ts=1720000000,
+    )
+    assert payload["approved_at"] == "26/07/2026 15:31"
+    assert payload["account"] == "0618407497"
+
+
+def test_empty_scrape_does_not_reemit_on_next_snapshot():
+    sent: list[dict] = []
+    orch = SlipOrchestrator(
+        {
+            "auto_confirm": {
+                "enabled": True,
+                "min_ocr_confidence": 0.9,
+                "require_manual_review": {"enabled": False, "amount_threshold": 99999},
+            },
+            "matching": {
+                "require_account_last4_match": True,
+                "prevent_duplicate_ref_number": True,
+            },
+        },
+        chrome_bridge=MagicMock(),
+        shared_secret="x" * 32,
+        send_withdraw_notify=sent.append,
+        activity_log=lambda _m: None,
+    )
+    orch.on_pending_orders(
+        {
+            "orders": [
+                {
+                    "order_id": "ORD-A",
+                    "amount": 10,
+                    "account": "0618407497",
+                    "bank": "KBANK",
+                }
+            ]
+        }
+    )
+    assert len(sent) == 1
+    orch.on_pending_orders({"orders": []})
+    orch.on_pending_orders(
+        {
+            "orders": [
+                {
+                    "order_id": "ORD-A",
+                    "amount": 10,
+                    "account": "0618407497",
+                    "bank": "KBANK",
+                }
+            ]
+        }
+    )
+    assert len(sent) == 1
 
 
 def test_on_pending_orders_emits_only_new(monkeypatch):

@@ -98,4 +98,11 @@ void main() {
     expect(q.visibleOrders, isEmpty);
     expect(q.stateOf('A'), isNull);
   });
+
+  test('upsert returns false when order_id already pending', () {
+    final q = WithdrawQueue();
+    final o = order('acct:0618407497', ts: 1);
+    expect(q.upsert(o), isTrue);
+    expect(q.upsert(o.copyWith(ts: 2)), isFalse);
+  });
 }

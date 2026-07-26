@@ -687,22 +687,64 @@
     }
 
     function pickNameFromCells(cells) {
+      const dirtyNameRe = /ถอน|อนุมัติ|รออนุมัติ|\d{1,2}\/\d{1,2}\/\d{2,4}|\d{1,2}:\d{2}/;
+      const labeledNameRe =
+        /ชื่อบัญชี(?:ธนาคาร)?\s*[:：]?\s*([^\n\d]{3,80}?)(?=\s*(?:เลขบัญชี|ยูส|ธนาคาร|$))/;
       let best = '';
       for (const cell of cells) {
-        const t = (cell.textContent || '').trim().replace(/\s+/g, ' ');
-        if (!t || t.length < 3) continue;
-        if (cellAmountText(t)) continue;
+        const raw = (cell.textContent || '').trim().replace(/\s+/g, ' ');
+        if (!raw || raw.length < 3) continue;
+        if (cellAmountText(raw)) continue;
+        // Prefer explicit account-name label inside multi-field member cells.
+        const labeled = labeledNameRe.exec(raw);
+        if (labeled) {
+          const candidate = labeled[1].trim().replace(/\s+/g, ' ');
+          if (
+            candidate.length >= 3 &&
+            !dirtyNameRe.test(candidate) &&
+            !/^\d+$/.test(candidate.replace(/[\s-]/g, ''))
+          ) {
+            if (candidate.length > best.length) best = candidate;
+            continue;
+          }
+        }
+        const t = raw;
+        if (dirtyNameRe.test(t)) continue;
         const compact = t.replace(/[\s-]/g, '');
         if (/^\d+$/.test(compact)) continue;
-        if (isBankAliasCell(t)) continue;
+        // Skip pure bank-alias cells, but not multi-field blobs that also carry a name.
+        if (isBankAliasCell(t) && !/ชื่อบัญชี/.test(t) && t.length < 40) continue;
         if (skipNameExact.has(t.toLowerCase()) || skipNameExact.has(t)) continue;
         const thaiCount = (t.match(/[\u0E00-\u0E7F]/g) || []).length;
         const letterCount = (t.match(/[a-zA-Z]/g) || []).length;
-        // Prefer Thai name cells; Latin only when multi-word (e.g. "Alice Bob").
         if (thaiCount < 3 && !(letterCount >= 3 && /\s/.test(t))) continue;
+        // Avoid giant member info blobs without a clean name extract.
+        if (t.length > 40 && /ยูส|เลขบัญชี|ชื่อธนาคาร/.test(t)) continue;
         if (t.length > best.length) best = t;
       }
       return best;
+    }
+
+    function pickApprovedAt(cells, rowText) {
+      const re = /อนุมัติ\s*[:：]?\s*(\d{1,2}\/\d{1,2}\/\d{2,4}\s+\d{1,2}:\d{2}(?::\d{2})?)/;
+      for (const cell of cells) {
+        const t = (cell.textContent || '').trim().replace(/\s+/g, ' ');
+        const m = re.exec(t);
+        if (m) return m[1].trim();
+      }
+      const m2 = re.exec(String(rowText || '').replace(/\s+/g, ' '));
+      return m2 ? m2[1].trim() : '';
+    }
+
+    function scoreAccountCandidate(digits, meta) {
+      let score = 0;
+      if (meta.fromDigitOnlyCell) score += 5;
+      if (meta.nearBank) score += 4;
+      if (meta.hasAccountLabel) score += 6;
+      // Username phones are usually 08x/09x; bank accounts often 0[1-7]x (incl. 06).
+      if (/^0[89]/.test(digits)) score -= 3;
+      if (digits.length >= 10 && digits.length <= 12) score += 1;
+      return score;
     }
 
     const rows = [...document.querySelectorAll(selector)];
@@ -766,47 +808,54 @@
       }
       if (!ref && cells.length > 0) ref = (cells[0].textContent || '').trim();
 
-      // Member account: prefer digit-only cells (full account), never invent digits.
-      // Skip Thai mobiles (08x/06x/09x) when a non-mobile account candidate exists.
+      // Member account: score candidates — prefer bank account over username phone.
       const amountDigits = amountStr.replace(/\D/g, '');
       let account = '';
-      let accountIsMobile = false;
-      function isThaiMobile(digits) {
-        return digits.length === 10 && /^0[689]/.test(digits);
-      }
-      function considerAccount(digits) {
+      let bestScore = -999;
+      function considerAccount(digits, meta) {
         if (digits.length < 9 || digits.length > 12 || digits === amountDigits) return;
-        const mobile = isThaiMobile(digits);
-        if (!account) {
+        const score = scoreAccountCandidate(digits, meta || {});
+        if (score > bestScore || (score === bestScore && digits.length > account.length)) {
+          bestScore = score;
           account = digits;
-          accountIsMobile = mobile;
-          return;
-        }
-        if (digits.length > account.length) {
-          account = digits;
-          accountIsMobile = mobile;
-          return;
-        }
-        if (digits.length === account.length && accountIsMobile && !mobile) {
-          account = digits;
-          accountIsMobile = false;
         }
       }
       for (const cell of cells) {
         const t = (cell.textContent || '').trim();
         if (cellAmountText(t)) continue;
-        considerAccount(t.replace(/\D/g, ''));
+        const digitsOnly = t.replace(/\D/g, '');
+        const fromDigitOnly = /^\d[\d\s-]*$/.test(t) && digitsOnly.length >= 9;
+        const nearBank = isBankAliasCell(t) || /ธนาคาร|เลขบัญชี|ชื่อบัญชี/.test(t);
+        const hasAccountLabel = /เลขบัญชี/.test(t);
+        // Prefer a single contiguous digit run; avoid gluing phone+account.
+        const runs = t.match(/\d{9,12}/g) || [];
+        if (runs.length) {
+          for (const run of runs) {
+            considerAccount(run, {
+              fromDigitOnlyCell: fromDigitOnly && runs.length === 1,
+              nearBank,
+              hasAccountLabel,
+            });
+          }
+        } else if (digitsOnly.length >= 9 && digitsOnly.length <= 12) {
+          considerAccount(digitsOnly, {
+            fromDigitOnlyCell: fromDigitOnly,
+            nearBank,
+            hasAccountLabel,
+          });
+        }
       }
       if (!account) {
         let m;
         accountRe.lastIndex = 0;
         while ((m = accountRe.exec(text)) !== null) {
-          considerAccount(m[1]);
+          considerAccount(m[1], {});
         }
       }
 
       let bank = matchBankCode(text);
       const name = pickNameFromCells(cells);
+      const approvedAt = pickApprovedAt(cells, text);
 
       const accountLast4 = account ? account.slice(-4) : '';
       let orderId = (ref || '').replace(/\s+/g, ' ').trim();
@@ -832,6 +881,7 @@
         bank: bank || undefined,
         name: name || undefined,
         account_name: name || undefined,
+        approved_at: approvedAt || undefined,
       });
     }
     return orders;

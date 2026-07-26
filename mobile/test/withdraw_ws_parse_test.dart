@@ -15,14 +15,30 @@ void main() {
       'account_name': '',
       'ts': 1,
     }, q);
-    expect(ok, isTrue);
+    expect(ok.ok, isTrue);
+    expect(ok.isNew, isTrue);
     expect(q.active?.orderId, 'W-1');
   });
 
   test('ignores clip messages', () {
     final q = WithdrawQueue();
-    expect(handleWithdrawNotifyMessage({'type': 'clip', 'text': 'hi'}, q), isFalse);
+    expect(handleWithdrawNotifyMessage({'type': 'clip', 'text': 'hi'}, q).ok, isFalse);
     expect(q.pending, isEmpty);
+  });
+
+  test('handleWithdrawNotifyMessage reports isNew', () {
+    final q = WithdrawQueue();
+    final msg = {
+      'type': 'withdraw_notify',
+      'order_id': 'ORD-1',
+      'amount': '10.00',
+      'account': '0618407497',
+      'bank': 'KBANK',
+      'account_name': 'A',
+      'ts': 1,
+    };
+    expect(handleWithdrawNotifyMessage(msg, q).isNew, isTrue);
+    expect(handleWithdrawNotifyMessage({...msg, 'ts': 2}, q).isNew, isFalse);
   });
 
   test('handleSlipStatusMessage done marks succeeded', () {

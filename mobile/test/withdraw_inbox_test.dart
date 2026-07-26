@@ -40,9 +40,9 @@ void main() {
     expect(find.text('คัดลอกยอด'), findsOneWidget);
     expect(find.text('คัดลอกบัญชี'), findsOneWidget);
     expect(find.byType(TextButton), findsWidgets);
-    expect(find.textContaining('🏦 บัญชี: 4774090171'), findsOneWidget);
+    expect(find.textContaining('🏦 เลขบัญชี: 4774090171'), findsOneWidget);
     expect(find.textContaining('🏧 ธนาคาร: KBANK'), findsOneWidget);
-    expect(find.textContaining('👤 ชื่อ: สมชาย'), findsOneWidget);
+    expect(find.textContaining('👤 ชื่อบัญชี: สมชาย'), findsOneWidget);
     expect(find.text('รอโอน'), findsOneWidget);
     expect(find.text('เคลียร์งาน'), findsOneWidget);
     expect(find.byIcon(Icons.payments_outlined), findsNothing);

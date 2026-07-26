@@ -41,6 +41,7 @@ def build_withdraw_notify_payload(
         "account": str(order.get("account") or "").strip(),
         "bank": str(order.get("bank") or "").strip(),
         "account_name": str(order.get("account_name") or order.get("name") or "").strip(),
+        "approved_at": str(order.get("approved_at") or "").strip(),
         "ts": int(ts if ts is not None else time.time()),
     }
 

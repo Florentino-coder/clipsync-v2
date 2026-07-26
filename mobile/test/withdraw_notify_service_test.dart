@@ -78,18 +78,36 @@ void main() {
     expect(copyTextForAction('other', data), isNull);
   });
 
+  test('formatWithdrawInboxLines is exactly the five product fields', () {
+    final lines = formatWithdrawInboxLines(
+      amount: '5,000.00',
+      account: '0618407497',
+      bank: 'KBANK',
+      accountName: 'สมชาย ใจดี',
+      approvedAt: '26/07/2026 15:31',
+    );
+    expect(lines, [
+      '🏧 ธนาคาร: KBANK',
+      '👤 ชื่อบัญชี: สมชาย ใจดี',
+      '🏦 เลขบัญชี: 0618407497',
+      '💰 จำนวนเงิน: 5,000.00',
+      '✅ อนุมัติ: 26/07/2026 15:31',
+    ]);
+  });
+
   test('formatWithdrawNotifyBody uses emoji structured lines', () {
     final body = formatWithdrawNotifyBody(
       amount: '5,000.00',
       account: '1048989698',
       bank: 'KBANK',
       accountName: 'ทดสอบ',
+      approvedAt: '26/07/2026 15:31',
     );
-    expect(body, contains('💰 ยอด: 5,000.00'));
-    expect(body, contains('🏦 บัญชี: 1048989698'));
+    expect(body, contains('💰 จำนวนเงิน: 5,000.00'));
+    expect(body, contains('🏦 เลขบัญชี: 1048989698'));
     expect(body, contains('🏧 ธนาคาร: KBANK'));
-    expect(body, contains('👤 ชื่อ: ทดสอบ'));
-    expect(body.split('\n').length, greaterThanOrEqualTo(4));
+    expect(body, contains('👤 ชื่อบัญชี: ทดสอบ'));
+    expect(body, contains('✅ อนุมัติ: 26/07/2026 15:31'));
   });
 
   test('formatWithdrawInboxLines matches notify emoji fields', () {
@@ -98,12 +116,12 @@ void main() {
       account: '1048989698',
       bank: 'KBANK',
       accountName: 'ทดสอบ',
+      approvedAt: '26/07/2026 15:31',
       stateLabel: 'รอโอน',
     );
-    expect(lines.first, '💰 ยอด: 5,000.00');
-    expect(lines, contains('🏦 บัญชี: 1048989698'));
-    expect(lines, contains('🏧 ธนาคาร: KBANK'));
-    expect(lines, contains('👤 ชื่อ: ทดสอบ'));
+    expect(lines.first, '🏧 ธนาคาร: KBANK');
+    expect(lines, contains('🏦 เลขบัญชี: 1048989698'));
+    expect(lines, contains('👤 ชื่อบัญชี: ทดสอบ'));
     expect(lines, contains('รอโอน'));
   });
 

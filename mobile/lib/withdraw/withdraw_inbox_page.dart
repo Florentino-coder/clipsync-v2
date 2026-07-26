@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import 'bank_logos.dart';
 import 'withdraw_notify_service.dart';
 import 'withdraw_order.dart';
 import 'withdraw_queue.dart';
@@ -133,10 +132,18 @@ class _WithdrawInboxPageState extends State<WithdrawInboxPage> {
                   account: order.account,
                   bank: order.bank,
                   accountName: order.accountName,
+                  approvedAt: order.approvedAt,
                   stateLabel: _stateLabel(state),
                 );
-                final amountLine = lines.isNotEmpty ? lines.first : '💰 ยอด: ${order.amount}';
-                final detailLines = lines.length > 1 ? lines.sublist(1) : const <String>[];
+                final amountLine = lines
+                        .where((l) => l.contains('จำนวนเงิน'))
+                        .cast<String?>()
+                        .firstWhere((_) => true, orElse: () => null) ??
+                    (order.amount.trim().isNotEmpty
+                        ? '💰 จำนวนเงิน: ${order.amount}'
+                        : (lines.isNotEmpty ? lines.first : 'รายการถอน'));
+                final detailLines =
+                    lines.where((l) => l != amountLine).toList(growable: false);
 
                 return ListTile(
                   selected: isActive,
@@ -144,13 +151,7 @@ class _WithdrawInboxPageState extends State<WithdrawInboxPage> {
                     horizontal: 12,
                     vertical: 8,
                   ),
-                  leading: Image.asset(
-                    bankLogoAsset(order.bank),
-                    width: 40,
-                    height: 40,
-                    errorBuilder: (_, __, ___) =>
-                        const Icon(Icons.account_balance),
-                  ),
+                  leading: const Icon(Icons.account_balance, size: 36),
                   title: Text(
                     amountLine,
                     style: const TextStyle(

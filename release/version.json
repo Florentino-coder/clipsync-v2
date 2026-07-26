@@ -3,21 +3,21 @@
   "released_at": "2026-07-26",
   "note": "clipsync-v2 TEST pipeline only — production clipsync still uses android-latest on the other repo",
   "pc": {
-    "version": "0.9.17",
+    "version": "0.9.18",
     "installer_url": "https://github.com/Florentino-coder/clipsync-v2/releases/download/slip-test-latest/ClipSyncPC_Setup.exe",
     "portable_url": "https://github.com/Florentino-coder/clipsync-v2/releases/download/slip-test-latest/ClipSyncPC.exe",
     "required": false,
-    "notes": "0.9.17 emit slip_status done on auto/manual confirm → phones"
+    "notes": "0.9.18 durable withdraw seen ids; approved_at in notify; no username as account_name"
   },
   "android": {
-    "version": "0.9.12+39",
+    "version": "0.9.13+40",
     "url": "https://github.com/Florentino-coder/clipsync-v2/releases/download/slip-test-latest/ClipSync-slip.apk",
     "required": false,
-    "notes": "slip_status done → inbox สำเร็จ ~1.5s then remove; cancel shade"
+    "notes": "0.9.13+40 five-field notify; no heads-up if already pending; swallow PlatformException; ATM icon"
   },
   "extension": {
-    "version": "1.0.48",
+    "version": "1.0.49",
     "download_url": "",
-    "notes": "1.0.48 resume Search ~2s after confirm (was stuck ~2min on พักรีเฟรช)"
+    "notes": "1.0.49 prefer bank account over username phone; clean name; scrape approved_at"
   }
 }

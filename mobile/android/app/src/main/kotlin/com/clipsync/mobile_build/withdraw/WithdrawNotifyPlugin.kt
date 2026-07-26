@@ -51,24 +51,28 @@ class WithdrawNotifyPlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
                     result.error("bad_args", "map required", null)
                     return
                 }
-                val rawOrders = args["orders"]
-                val list = mutableListOf<WithdrawalNotifier.NotifyData>()
-                if (rawOrders is List<*>) {
-                    for (item in rawOrders) {
-                        val m = item as? Map<*, *> ?: continue
-                        list.add(parseNotifyData(m))
+                try {
+                    val rawOrders = args["orders"]
+                    val list = mutableListOf<WithdrawalNotifier.NotifyData>()
+                    if (rawOrders is List<*>) {
+                        for (item in rawOrders) {
+                            val m = item as? Map<*, *> ?: continue
+                            list.add(parseNotifyData(m))
+                        }
                     }
+                    val capped = list.take(WithdrawalNotifier.MAX_VISIBLE)
+                    val headsUpOrderId = args.string("headsUpOrderId").ifBlank { null }
+                    val pendingCount = args.int("pendingCount", capped.size)
+                    WithdrawalNotifier.syncVisible(
+                        context,
+                        capped,
+                        headsUpOrderId,
+                        pendingCount,
+                    )
+                    result.success(null)
+                } catch (e: Exception) {
+                    result.error("sync_failed", e.message, null)
                 }
-                val capped = list.take(WithdrawalNotifier.MAX_VISIBLE)
-                val headsUpOrderId = args.string("headsUpOrderId").ifBlank { null }
-                val pendingCount = args.int("pendingCount", capped.size)
-                WithdrawalNotifier.syncVisible(
-                    context,
-                    capped,
-                    headsUpOrderId,
-                    pendingCount,
-                )
-                result.success(null)
             }
             "cancel" -> {
                 val args = call.arguments as? Map<*, *>

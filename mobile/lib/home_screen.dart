@@ -245,16 +245,16 @@ class _HomeScreenState extends State<HomeScreen> {
       });
       _addEvent('Clipboard ${text.length} chars');
     } else if (type == 'withdraw_notify') {
-      final wasEmpty = _withdrawQueue.pending.isEmpty;
-      handleWithdrawNotifyMessage(msg, _withdrawQueue);
+      final wasEmpty = msg['wasEmpty'] == true || _withdrawQueue.pending.isEmpty;
+      final handled = handleWithdrawNotifyMessage(msg, _withdrawQueue);
+      final isNew = msg['isNew'] == true || handled.isNew;
       setState(() {});
       final orderId = msg['order_id'] as String? ?? '';
       _addEvent('Withdraw notify $orderId');
-      // FGS already heads-up'd; refresh silent in main isolate.
       unawaited(
         WithdrawNotifyService.instance.syncFromQueue(
           _withdrawQueue,
-          allowHeadsUp: false,
+          allowHeadsUp: isNew,
           wasEmpty: wasEmpty,
         ),
       );
@@ -578,14 +578,14 @@ class _HomeScreenState extends State<HomeScreen> {
               _addEvent('Fallback copied ${text.length} chars');
             } else if (type == 'withdraw_notify') {
               final wasEmpty = _withdrawQueue.pending.isEmpty;
-              handleWithdrawNotifyMessage(msg, _withdrawQueue);
+              final handled = handleWithdrawNotifyMessage(msg, _withdrawQueue);
               if (!mounted) return;
               setState(() {});
               final orderId = msg['order_id'] as String? ?? '';
               _addEvent('Fallback withdraw $orderId');
               await WithdrawNotifyService.instance.syncFromQueue(
                 _withdrawQueue,
-                allowHeadsUp: true,
+                allowHeadsUp: handled.isNew,
                 wasEmpty: wasEmpty,
               );
             } else if (type == 'slip_status') {

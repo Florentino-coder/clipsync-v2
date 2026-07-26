@@ -18,7 +18,7 @@ import 'withdraw/withdraw_ws.dart';
 // - ws://YOUR_VPS_IP:8765
 // - wss://clipsync-relay.onrender.com
 const kRelayUrl = 'wss://clipsync-relay.onrender.com';
-const kAppVersion = '0.9.12+39';
+const kAppVersion = '0.9.13+40';
 
 /// SharedPreferences key for pairing v2 HMAC secret (see [slip_bootstrap.dart]).
 const kSharedSecretPrefKey = 'shared_secret';
@@ -206,20 +206,15 @@ class ClipTaskHandler extends TaskHandler {
               case 'withdraw_notify':
                 final queue = WithdrawQueueStore.instance;
                 final wasEmpty = queue.pending.isEmpty;
-                handleWithdrawNotifyMessage(msg, queue);
+                final handled = handleWithdrawNotifyMessage(msg, queue);
+                // Native MethodChannel is registered on the UI engine only —
+                // sync shade on the main isolate to avoid PlatformException spam.
                 FlutterForegroundTask.sendDataToMain({
                   'type': 'withdraw_notify',
+                  'wasEmpty': wasEmpty,
+                  'isNew': handled.isNew,
                   ...msg,
                 });
-                try {
-                  await WithdrawNotifyService.instance.syncFromQueue(
-                    queue,
-                    allowHeadsUp: true,
-                    wasEmpty: wasEmpty,
-                  );
-                } catch (e) {
-                  _sendDebug('withdraw notify sync error: $e');
-                }
                 break;
 
               case 'slip_status':

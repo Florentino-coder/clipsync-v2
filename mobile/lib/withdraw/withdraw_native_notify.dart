@@ -54,6 +54,11 @@ class WithdrawNativeNotify {
       });
     } on MissingPluginException {
       // Desktop/tests without the Android plugin.
+    } on PlatformException catch (e) {
+      // FGS isolate often lacks the plugin — never rethrow (diagnostics spam).
+      debugPrint(
+        'WithdrawNativeNotify.syncVisible PlatformException: ${e.code} ${e.message}',
+      );
     }
   }
 
@@ -94,6 +99,8 @@ class WithdrawNativeNotify {
       await channel.invokeMethod<void>('cancel', <String, Object?>{'id': id});
     } on MissingPluginException {
       // ignore
+    } on PlatformException catch (e) {
+      debugPrint('WithdrawNativeNotify.cancel PlatformException: ${e.code}');
     }
   }
 
@@ -103,6 +110,8 @@ class WithdrawNativeNotify {
       await channel.invokeMethod<void>('cancelAll');
     } on MissingPluginException {
       // ignore
+    } on PlatformException catch (e) {
+      debugPrint('WithdrawNativeNotify.cancelAll PlatformException: ${e.code}');
     }
   }
 
@@ -114,6 +123,8 @@ class WithdrawNativeNotify {
       final id = raw?.trim() ?? '';
       return id.isEmpty ? null : id;
     } on MissingPluginException {
+      return null;
+    } on PlatformException {
       return null;
     }
   }

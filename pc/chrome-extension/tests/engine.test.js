@@ -274,6 +274,36 @@ describe('deepFindByText + findRow + findConfirmButton', () => {
     assert.match(name, /สมชาย/);
   });
 
+  it('scrapePendingOrders prefers bank account over username phone', () => {
+    const dom = new JSDOM(`<!DOCTYPE html><body>
+      <table><tbody>
+        <tr>
+          <td>1</td>
+          <td>
+            <div>ยูสเซอร์เนม 0806609953</div>
+            <div>ชื่อธนาคาร ธนาคารกสิกรไทย</div>
+            <div>ชื่อบัญชีธนาคาร วราภรณ์ ภูสุรินทร์</div>
+            <div>เลขบัญชีธนาคาร 0618407497</div>
+          </td>
+          <td>715.00</td>
+          <td>ถอน : 26/07/2026 16:05:09 อนุมัติ : 26/07/2026 16:05:51</td>
+          <td>อนุมัติแล้ว</td>
+        </tr>
+      </tbody></table>
+    </body>`);
+    global.document = dom.window.document;
+    const profile = {
+      profile_id: 'jinbao356_v1',
+      row_selector_hints: ['table tbody tr'],
+    };
+    const orders = scrapePendingOrders(profile);
+    assert.ok(orders.length >= 1, JSON.stringify(orders));
+    assert.equal(orders[0].account, '0618407497');
+    assert.notEqual(orders[0].account, '0806609953');
+    assert.match(String(orders[0].name || orders[0].account_name || ''), /วราภรณ์/);
+    assert.match(String(orders[0].approved_at || ''), /26\/07\/2026 16:05:51/);
+  });
+
   it('scrapePendingOrders accepts whole-baht amounts on approved rows', () => {
     const dom = new JSDOM(`<!DOCTYPE html><body>
       <div class="el-tabs__item is-active">รายการที่อนุมัติแล้ว</div>

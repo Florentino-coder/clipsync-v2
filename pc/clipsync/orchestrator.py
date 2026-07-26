@@ -102,9 +102,10 @@ def _normalize_order(order: Mapping[str, Any]) -> dict[str, Any]:
     if bank is None:
         bank = order.get("bank_name") or order.get("bank_name_th") or order.get("member_bank")
 
+    # Prefer explicit account_name / name — never fall back to username (often a phone).
     name = order.get("account_name")
     if name is None:
-        name = order.get("name") or order.get("username") or order.get("member_name") or ""
+        name = order.get("name") or order.get("member_name") or ""
 
     amount = order.get("amount")
 
@@ -115,6 +116,9 @@ def _normalize_order(order: Mapping[str, Any]) -> dict[str, Any]:
         "account_last4": str(last4) if last4 else "",
         "account_name": str(name).strip() if name is not None else "",
         "bank": str(bank).strip() if bank is not None and str(bank).strip() else "",
+        "approved_at": str(
+            order.get("approved_at") or order.get("approvedAt") or ""
+        ).strip(),
     }
 
 
@@ -162,6 +166,7 @@ class SlipOrchestrator:
 
         self._used_refs: set[str] = load_used_refs(self._used_refs_path)
         self._pending_orders: list[dict[str, Any]] = []
+        self._withdraw_seen_ids: set[str] = set()
         self._confirm_waiters: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._last_scrape_log = ""
         self._last_scrape_log_at = 0.0
@@ -209,7 +214,23 @@ class SlipOrchestrator:
             normalized = [
                 _normalize_order(o) for o in orders if isinstance(o, Mapping)
             ]
-            newly = new_orders_since(self._pending_orders, normalized)
+            newly: list[dict[str, Any]] = []
+            for o in normalized:
+                oid = str(o.get("order_id") or "").strip()
+                if not oid or oid in self._withdraw_seen_ids:
+                    continue
+                newly.append(o)
+                self._withdraw_seen_ids.add(oid)
+            # Cap seen set: drop ids not in current snapshot once over 500.
+            if len(self._withdraw_seen_ids) > 500:
+                current_ids = {
+                    str(o.get("order_id") or "").strip()
+                    for o in normalized
+                    if str(o.get("order_id") or "").strip()
+                }
+                stale = [i for i in self._withdraw_seen_ids if i not in current_ids]
+                for i in stale[: max(0, len(self._withdraw_seen_ids) - 500)]:
+                    self._withdraw_seen_ids.discard(i)
             source = str(data.get("source") or "dom").strip() or "dom"
             scrape_msg = (
                 f"Withdraw scrape: {len(normalized)} order(s), "
@@ -225,6 +246,7 @@ class SlipOrchestrator:
                 self._log_activity(scrape_msg)
                 self._last_scrape_log = scrape_msg
                 self._last_scrape_log_at = now
+            # Update display snapshot even if empty — never clear _withdraw_seen_ids.
             self._pending_orders = normalized
             self._emit_withdraw_notifies(newly)
         except Exception:

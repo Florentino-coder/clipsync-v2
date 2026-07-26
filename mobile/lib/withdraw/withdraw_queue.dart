@@ -33,19 +33,25 @@ class WithdrawQueue {
     }
     final p = pending;
     if (p.isEmpty) return null;
-    return p.first; // newest by ts (pending is sorted desc)
+    return p.first;
   }
 
-  void upsert(WithdrawOrder order) {
+  bool containsPending(String orderId) =>
+      _states[orderId] == WithdrawItemState.pending;
+
+  /// Returns true if this order_id was not already pending (new for heads-up).
+  bool upsert(WithdrawOrder order) {
     final existing = _states[order.orderId];
+    final wasNewPending = existing != WithdrawItemState.pending;
     _orders[order.orderId] = order;
     if (existing == WithdrawItemState.failed ||
         existing == WithdrawItemState.processing ||
         existing == WithdrawItemState.done) {
-      // Keep safety state — silent re-notify must not unlock copy.
-      return;
+      // Keep safety state — silent re-notify must not unlock copy / heads-up.
+      return false;
     }
     _states[order.orderId] = WithdrawItemState.pending;
+    return wasNewPending;
   }
 
   void setActive(String orderId) {
@@ -95,7 +101,6 @@ class WithdrawQueue {
 
   WithdrawItemState? stateOf(String orderId) => _states[orderId];
 
-  /// Clears pending withdraw items only (keeps processing/failed/done).
   void clearPending() {
     final ids = _orders.keys
         .where((id) => _states[id] == WithdrawItemState.pending)

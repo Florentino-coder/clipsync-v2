@@ -116,4 +116,27 @@ void main() {
     expect(orderId, 'ORD-OPEN');
     expect(log.single.method, 'takeOpenInboxOrderId');
   });
+
+  test('syncVisible swallows PlatformException', () async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      throw PlatformException(code: 'no_context', message: 'plugin not attached');
+    });
+    await WithdrawNativeNotify.syncVisible(
+      orders: [
+        {
+          'orderId': 'ORD-1',
+          'amount': '100.00',
+          'account': '0618407497',
+          'bank': 'KBANK',
+          'accountName': 'สมชาย',
+          'body': 'x',
+          'title': 'รายการถอนใหม่',
+          'canCopy': true,
+        }
+      ],
+      headsUpOrderId: 'ORD-1',
+      pendingCount: 1,
+    ); // must complete without throw
+  });
 }

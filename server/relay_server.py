@@ -309,6 +309,7 @@ async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
                 account = msg.get("account", "")
                 bank = msg.get("bank", "")
                 account_name = msg.get("account_name", msg.get("name", ""))
+                approved_at = msg.get("approved_at", "")
                 ts = msg.get("ts", 0)
                 try:
                     ts_i = int(ts)
@@ -323,6 +324,7 @@ async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
                         "account": str(account) if account is not None else "",
                         "bank": str(bank) if bank is not None else "",
                         "account_name": str(account_name) if account_name is not None else "",
+                        "approved_at": str(approved_at) if approved_at is not None else "",
                         "ts": ts_i,
                     },
                     ensure_ascii=False,
