@@ -1,3 +1,4 @@
+import '../slip_ocr.dart';
 import 'bank_parser.dart';
 import 'bbl_parser.dart';
 import 'kbank_parser.dart';
@@ -10,10 +11,10 @@ class ParserRegistry {
     BblParser(),
   ];
 
-  static (String, ParsedSlip) parseAny(String raw) {
+  static (String, ParsedSlip) parseAny(String raw, {List<OcrLine>? lines}) {
     for (final parser in parsers) {
       if (parser.matches(raw)) {
-        return (parser.bankCode, parser.parse(raw));
+        return (parser.bankCode, parser.parse(raw, lines: lines));
       }
     }
     return ('UNKNOWN', ParsedSlip(valid: false, errors: ['bank_unknown']));

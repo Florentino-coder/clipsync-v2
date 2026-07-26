@@ -5,6 +5,7 @@ import 'package:clipsync_app/slip/parsers/bbl_parser.dart';
 import 'package:clipsync_app/slip/parsers/kbank_parser.dart';
 import 'package:clipsync_app/slip/parsers/parser_registry.dart';
 import 'package:clipsync_app/slip/parsers/scb_parser.dart';
+import 'package:clipsync_app/slip/parsers/slip_account_parser.dart';
 import 'package:clipsync_app/slip/slip_event.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -35,15 +36,31 @@ void main() {
   });
 
   group('ScbParser', () {
-    test('extracts amount and ref from fixture', () {
+    test('single-account stub scb_01 is NEEDS_REVIEW', () {
       final raw = File('test/fixtures/scb_01.txt').readAsStringSync();
       final parsed = ScbParser().parse(raw);
 
-      expect(parsed.valid, isTrue);
+      expect(parsed.accountConfidence, SlipAccountConfidence.needsReview);
+      expect(parsed.valid, isFalse);
+      expect(parsed.errors, contains('accounts_needs_review'));
       expect(parsed.amount, 350.00);
       expect(parsed.refNumber, isNotNull);
       expect(parsed.refNumber!.length, greaterThanOrEqualTo(15));
-      expect(parsed.receiverAccountLast4, '6789');
+      expect(parsed.receiverAccountLast4, isNull);
+      expect(parsed.senderAccountLast4, isNull);
+    });
+
+    test('two-account stub extracts amount ref and HIGH roles', () {
+      final raw =
+          File('test/fixtures/scb_01_two_accounts.txt').readAsStringSync();
+      final parsed = ScbParser().parse(raw);
+
+      expect(parsed.accountConfidence, SlipAccountConfidence.high);
+      expect(parsed.valid, isTrue);
+      expect(parsed.amount, 350.00);
+      expect(parsed.refNumber, isNotNull);
+      expect(parsed.senderAccountLast4, '6900');
+      expect(parsed.receiverAccountLast4, '1756');
     });
 
     test('rejects garbage', () {
@@ -91,13 +108,29 @@ void main() {
       expect(parsed.receiverAccountMasked, 'xxxxxx5559');
     });
 
-    test('sender is null when only one masked account is present', () {
+    test('single masked account is NEEDS_REVIEW — not assumed receiver', () {
       final parsed = ScbParser().parse(
         'SCB\nจำนวน 100.00\nรหัสอ้างอิง 202607221432001\nx6789',
       );
-
-      expect(parsed.receiverAccountLast4, '6789');
+      expect(parsed.accountConfidence, SlipAccountConfidence.needsReview);
       expect(parsed.senderAccountLast4, isNull);
+      expect(parsed.receiverAccountLast4, isNull);
+      expect(parsed.errors, contains('accounts_needs_review'));
+      expect(parsed.valid, isFalse);
+    });
+
+    test('two masked accounts without Thai labels → HIGH by order', () {
+      final parsed = ScbParser().parse('''
+SCB
+xxx-xxx690-0
+xxx-xxx175-6
+3,727.00
+Ref 202607268XRZLCrFvm0JLRag6
+''');
+      expect(parsed.accountConfidence, SlipAccountConfidence.high);
+      expect(parsed.senderAccountLast4, '6900');
+      expect(parsed.receiverAccountLast4, '1756');
+      expect(parsed.errors, isNot(contains('accounts_needs_review')));
     });
 
     test('normalizes OCR confusion O→0 and l/I→1 in ref', () {
@@ -229,15 +262,16 @@ xxx-xxx175-6
   });
 
   group('KbankParser', () {
-    test('extracts amount and ref from fixture', () {
+    test('single-account stub kbank_01 is NEEDS_REVIEW', () {
       final raw = File('test/fixtures/kbank_01.txt').readAsStringSync();
       final parsed = KbankParser().parse(raw);
 
-      expect(parsed.valid, isTrue);
+      expect(parsed.accountConfidence, SlipAccountConfidence.needsReview);
+      expect(parsed.valid, isFalse);
+      expect(parsed.errors, contains('accounts_needs_review'));
       expect(parsed.amount, 1250.50);
       expect(parsed.refNumber, isNotNull);
-      expect(parsed.refNumber!.length, greaterThanOrEqualTo(15));
-      expect(parsed.receiverAccountLast4, '1234');
+      expect(parsed.receiverAccountLast4, isNull);
     });
 
     test('rejects garbage', () {
@@ -254,15 +288,16 @@ xxx-xxx175-6
   });
 
   group('BblParser', () {
-    test('extracts amount and ref from fixture', () {
+    test('single-account stub bbl_01 is NEEDS_REVIEW', () {
       final raw = File('test/fixtures/bbl_01.txt').readAsStringSync();
       final parsed = BblParser().parse(raw);
 
-      expect(parsed.valid, isTrue);
+      expect(parsed.accountConfidence, SlipAccountConfidence.needsReview);
+      expect(parsed.valid, isFalse);
+      expect(parsed.errors, contains('accounts_needs_review'));
       expect(parsed.amount, 500.00);
       expect(parsed.refNumber, isNotNull);
-      expect(parsed.refNumber!.length, greaterThanOrEqualTo(15));
-      expect(parsed.receiverAccountLast4, '5678');
+      expect(parsed.receiverAccountLast4, isNull);
     });
 
     test('rejects garbage', () {
@@ -287,6 +322,7 @@ xxx-xxx175-6
 
     test('KBANK K+ — tail digit masked (xxx-x-x0758-x)', () {
       final p = parseFixture('kbank_kplus_real.txt');
+      expect(p.accountConfidence, SlipAccountConfidence.high);
       // Payer template keeps the hidden tail position so the PC can match.
       expect(p.senderAccountMasked, 'xxxxx0758x');
       expect(p.receiverAccountMasked, 'xxxxx0860x');
@@ -296,6 +332,7 @@ xxx-xxx175-6
 
     test('Krungthai — XXX-X-XX994-3', () {
       final p = parseFixture('ktb_real.txt');
+      expect(p.accountConfidence, SlipAccountConfidence.high);
       expect(p.senderAccountMasked, 'xxxxxx9943');
       expect(p.receiverAccountMasked, 'xxxxxx8591');
       expect(p.senderAccountLast4, '9943');
@@ -304,6 +341,7 @@ xxx-xxx175-6
 
     test('BBL — only 3 visible tail digits (584-0-xxx518)', () {
       final p = parseFixture('bbl_real.txt');
+      expect(p.accountConfidence, SlipAccountConfidence.high);
       // Previously dropped (only 3 tail digits); now captured with prefix.
       expect(p.senderAccountMasked, '5840xxx518');
       expect(p.receiverAccountMasked, '0170xxx850');
@@ -312,6 +350,7 @@ xxx-xxx175-6
 
     test('GSB mymo — leading digits visible (0203xxxx7778)', () {
       final p = parseFixture('gsb_mymo_real.txt');
+      expect(p.accountConfidence, SlipAccountConfidence.high);
       expect(p.senderAccountMasked, '0203xxxx7778');
       expect(p.receiverAccountMasked, '01xxxx2850');
       expect(p.senderAccountLast4, '7778');
@@ -320,31 +359,34 @@ xxx-xxx175-6
   });
 
   group('ParserRegistry', () {
-    test('parseAny routes SCB fixture', () {
-      final raw = File('test/fixtures/scb_01.txt').readAsStringSync();
+    test('parseAny routes SCB two-account fixture', () {
+      final raw =
+          File('test/fixtures/scb_01_two_accounts.txt').readAsStringSync();
       final (bank, parsed) = ParserRegistry.parseAny(raw);
 
       expect(bank, 'SCB');
       expect(parsed.valid, isTrue);
       expect(parsed.amount, 350.00);
+      expect(parsed.accountConfidence, SlipAccountConfidence.high);
     });
 
-    test('parseAny routes KBANK fixture', () {
-      final raw = File('test/fixtures/kbank_01.txt').readAsStringSync();
+    test('parseAny routes KBANK real dual-account fixture', () {
+      final raw =
+          File('test/fixtures/kbank_kplus_real.txt').readAsStringSync();
       final (bank, parsed) = ParserRegistry.parseAny(raw);
 
       expect(bank, 'KBANK');
       expect(parsed.valid, isTrue);
-      expect(parsed.amount, 1250.50);
+      expect(parsed.amount, 100.00);
     });
 
-    test('parseAny routes BBL fixture', () {
-      final raw = File('test/fixtures/bbl_01.txt').readAsStringSync();
+    test('parseAny routes BBL real dual-account fixture', () {
+      final raw = File('test/fixtures/bbl_real.txt').readAsStringSync();
       final (bank, parsed) = ParserRegistry.parseAny(raw);
 
       expect(bank, 'BBL');
       expect(parsed.valid, isTrue);
-      expect(parsed.amount, 500.00);
+      expect(parsed.amount, 100.00);
     });
 
     test('parseAny returns UNKNOWN for unrecognized text', () {

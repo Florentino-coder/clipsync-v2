@@ -49,7 +49,7 @@ void main() {
   });
 
   test('processes watcher event through OCR parse and store', () async {
-    final raw = File('test/fixtures/scb_01.txt').readAsStringSync();
+    final raw = File('test/fixtures/scb_01_two_accounts.txt').readAsStringSync();
     final pipeline = SlipPipeline(
       ocr: FakeSlipOcr(raw, confidence: 0.92),
       store: store,
@@ -177,7 +177,7 @@ void main() {
 
   test('watchAndProcess skips null results instead of throwing', () async {
     final controller = StreamController<Map<String, dynamic>>();
-    final ocr = FakeSlipOcr(File('test/fixtures/scb_01.txt').readAsStringSync());
+    final ocr = FakeSlipOcr(File('test/fixtures/scb_01_two_accounts.txt').readAsStringSync());
     final pipeline = SlipPipeline(
       ocr: ocr,
       store: store,
@@ -208,7 +208,7 @@ void main() {
 
   test('watchAndProcess skips content URI copy failures', () async {
     final controller = StreamController<Map<String, dynamic>>();
-    final ocr = FakeSlipOcr(File('test/fixtures/scb_01.txt').readAsStringSync());
+    final ocr = FakeSlipOcr(File('test/fixtures/scb_01_two_accounts.txt').readAsStringSync());
     final pipeline = SlipPipeline(
       ocr: ocr,
       store: store,
@@ -235,7 +235,7 @@ void main() {
   });
 
   test('optional outbox is enqueued when slip is ready', () async {
-    final raw = File('test/fixtures/scb_01.txt').readAsStringSync();
+    final raw = File('test/fixtures/scb_01_two_accounts.txt').readAsStringSync();
     final sent = <Map<String, dynamic>>[];
     final outbox = SlipOutbox(
       store: store,

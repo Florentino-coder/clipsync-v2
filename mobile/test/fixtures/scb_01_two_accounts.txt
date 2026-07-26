@@ -1,0 +1,9 @@
+# Happy-path SCB stub with exactly 2 masked accounts (Y-order = จาก then ไปยัง).
+SCB Easy
+ไทยพาณิชย์
+Siam Commercial Bank
+โอนเงินสำเร็จ
+xxx-xxx690-0
+xxx-xxx175-6
+จำนวน: 350.00 บาท
+รหัสอ้างอิง: 202607221432001

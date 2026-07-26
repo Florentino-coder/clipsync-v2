@@ -1,3 +1,4 @@
+import '../slip_ocr.dart';
 import 'bank_parser.dart';
 
 class BblParser implements BankParser {
@@ -9,6 +10,6 @@ class BblParser implements BankParser {
       raw.contains('Bangkok Bank') || raw.contains('กรุงเทพ');
 
   @override
-  ParsedSlip parse(String raw) =>
-      parseSlipFields(raw, minRefLength: 15, maxRefLength: 25);
+  ParsedSlip parse(String raw, {List<OcrLine>? lines}) =>
+      parseSlipFields(raw, minRefLength: 15, maxRefLength: 25, lines: lines);
 }

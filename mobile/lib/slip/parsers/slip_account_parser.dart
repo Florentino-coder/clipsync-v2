@@ -18,8 +18,13 @@ class SlipAccountParseResult {
   });
 }
 
-final _amountLineRe = RegExp(r'^\d{1,3}(,\d{3})*\.\d{2}$');
-final _accountDashRe = RegExp(r'[xX0-9*]{1,4}(-[xX0-9*]{1,7}){1,4}');
+// Claude-style dash groups; {1,7} so middle segments like xxx690 match.
+final _accountDashRe = RegExp(
+  r'[xX0-9*\u2022\u00d7\u25cf]{1,4}(-[xX0-9*\u2022\u00d7\u25cf]{1,7}){1,4}',
+);
+final _shortMaskRe = RegExp(r'[xX*]{1,6}-?\d{3,4}|\*{1,6}\d{3,4}');
+final _fullAccountRe = RegExp(r'(?<![0-9])\d{8,14}(?![0-9])');
+final _dateLike = RegExp(r'^\d{1,2}-\d{1,2}-\d{2,4}$|^\d{4}-\d{1,2}-\d{1,2}$');
 
 String? _amountTokenIn(String text) {
   final compact = text.replaceAll(' ', '');
@@ -33,16 +38,69 @@ bool _lineIsAmount(String text) {
   return text.replaceAll(' ', '').contains(t);
 }
 
+bool _isFeeLine(String text) =>
+    text.contains('ค่าธรรมเนียม') ||
+    text.toLowerCase().contains('fee');
+
+bool _looksLikeRefLine(String text) {
+  final lower = text.toLowerCase();
+  return text.contains('รหัสอ้างอิง') ||
+      text.contains('เลขที่อ้างอิง') ||
+      text.contains('เลขที่รายการ') ||
+      text.contains('หมายเลขอ้างอิง') ||
+      lower.contains('reference') ||
+      RegExp(r'\bref\b').hasMatch(lower);
+}
+
+bool _tokenOk(String token) {
+  if (_dateLike.hasMatch(token)) return false;
+  final digits = token.replaceAll(RegExp(r'[^0-9]'), '');
+  if (digits.length < 2 || digits.length >= 15) return false;
+  return true;
+}
+
 String? _accountTokenIn(String text) {
-  final m = _accountDashRe.firstMatch(text);
-  if (m != null) {
-    final token = m.group(0)!;
-    final digits = token.replaceAll(RegExp(r'[^0-9]'), '');
-    if (digits.length >= 2 && digits.length < 15) return token;
+  if (_isFeeLine(text)) return null;
+  // Alphanumeric bank refs often contain Latin X — never treat as accounts.
+  if (_looksLikeRefLine(text)) return null;
+
+  final dash = _accountDashRe.firstMatch(text);
+  if (dash != null) {
+    final token = dash.group(0)!;
+    if (_tokenOk(token)) return token;
   }
-  // short-mask for stubs like x6789 — only as candidate, never assign roles unless count==2
-  final short = RegExp(r'[xX*]{1,6}-?\d{3,4}').firstMatch(text);
-  if (short != null) return short.group(0);
+
+  // Require 2+ consecutive mask glyphs so refs like 202607268XRZL… do not match.
+  final undashed = RegExp(
+    r'[0-9]*[xX*\u2022\u00d7\u25cf]{2,}[0-9xX*\u2022\u00d7\u25cf]*',
+  ).firstMatch(text);
+  if (undashed != null) {
+    final token = undashed.group(0)!;
+    if (token.length >= 6 && _tokenOk(token)) {
+      return token;
+    }
+  }
+
+  final short = _shortMaskRe.firstMatch(text);
+  if (short != null) {
+    final token = short.group(0)!;
+    if (_tokenOk(token)) return token;
+  }
+
+  // Full undashed account (SCB payee often printed in full).
+  if (!_lineIsAmount(text)) {
+    final full = _fullAccountRe.firstMatch(text);
+    if (full != null) {
+      final token = full.group(0)!;
+      // Reject digit runs that continue into letters (ref blobs).
+      final after = text.substring(full.end);
+      if (after.isNotEmpty && RegExp(r'^[A-Za-z]').hasMatch(after)) {
+        return null;
+      }
+      if (_tokenOk(token) && token.length >= 8) return token;
+    }
+  }
+
   return null;
 }
 
@@ -50,7 +108,9 @@ enum _TransferLabel { sender, receiver }
 
 _TransferLabel? _transferLabelIn(String text) {
   if (text.contains('จาก')) return _TransferLabel.sender;
-  if (text.contains('ไปยัง')) return _TransferLabel.receiver;
+  if (text.contains('ไปยัง') || text.contains('ไปที่') || text.contains('ถึง')) {
+    return _TransferLabel.receiver;
+  }
   final lower = text.toLowerCase();
   if (RegExp(r'\bfrom\b').hasMatch(lower)) return _TransferLabel.sender;
   if (RegExp(r'\bto\b').hasMatch(lower)) return _TransferLabel.receiver;
@@ -64,11 +124,11 @@ _TransferLabel? _transferLabelIn(String text) {
   String? senderToken;
   String? receiverToken;
   for (final line in sorted) {
-    if (amountY != null && line.yTop >= amountY) continue;
     final label = _transferLabelIn(line.text);
     if (label == null) continue;
     final token = _accountTokenIn(line.text);
     if (token == null) continue;
+    // Labels may sit on amount-at-top layouts; do not hard-filter by amountY.
     switch (label) {
       case _TransferLabel.sender:
         senderToken = token;
@@ -86,10 +146,24 @@ bool _labelsSwapYOrder(
 ) {
   if (accounts.length != 2) return false;
   final accountSet = {accounts[0], accounts[1]};
-  if (!accountSet.contains(labeledSender) || !accountSet.contains(labeledReceiver)) {
+  if (!accountSet.contains(labeledSender) ||
+      !accountSet.contains(labeledReceiver)) {
     return false;
   }
   return labeledSender == accounts[1] && labeledReceiver == accounts[0];
+}
+
+List<String> _chooseAccountCandidates({
+  required List<String> aboveAmount,
+  required List<String> allAccounts,
+}) {
+  // Prefer classic layout: accounts above the amount line.
+  if (aboveAmount.length == 2) return aboveAmount;
+  // Amount-at-top banks (BBL/GSB): both accounts sit below จำนวนเงิน.
+  if (allAccounts.length == 2) return allAccounts;
+  // Incomplete / noisy — report what we saw for NEEDS_REVIEW debugging.
+  if (aboveAmount.isNotEmpty) return aboveAmount;
+  return allAccounts;
 }
 
 SlipAccountParseResult parseAccountLines(
@@ -109,12 +183,21 @@ SlipAccountParseResult parseAccountLines(
   final amountToken =
       amountLine == null ? null : _amountTokenIn(amountLine.text);
 
-  final accounts = <String>[];
+  final above = <String>[];
+  final all = <String>[];
   for (final line in sorted) {
-    if (amountY != null && line.yTop >= amountY) continue;
     final token = _accountTokenIn(line.text);
-    if (token != null) accounts.add(token);
+    if (token == null) continue;
+    all.add(token);
+    if (amountY == null || line.yTop < amountY) {
+      above.add(token);
+    }
   }
+
+  final accounts = _chooseAccountCandidates(
+    aboveAmount: above,
+    allAccounts: all,
+  );
 
   if (accounts.length == 2) {
     var sender = accounts[0];
