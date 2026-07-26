@@ -46,7 +46,56 @@ String? _accountTokenIn(String text) {
   return null;
 }
 
-SlipAccountParseResult parseAccountLines(List<OcrLine> lines) {
+enum _TransferLabel { sender, receiver }
+
+_TransferLabel? _transferLabelIn(String text) {
+  if (text.contains('จาก')) return _TransferLabel.sender;
+  if (text.contains('ไปยัง')) return _TransferLabel.receiver;
+  final lower = text.toLowerCase();
+  if (RegExp(r'\bfrom\b').hasMatch(lower)) return _TransferLabel.sender;
+  if (RegExp(r'\bto\b').hasMatch(lower)) return _TransferLabel.receiver;
+  return null;
+}
+
+({String? sender, String? receiver}) _labeledAccountTokens(
+  List<OcrLine> sorted,
+  int? amountY,
+) {
+  String? senderToken;
+  String? receiverToken;
+  for (final line in sorted) {
+    if (amountY != null && line.yTop >= amountY) continue;
+    final label = _transferLabelIn(line.text);
+    if (label == null) continue;
+    final token = _accountTokenIn(line.text);
+    if (token == null) continue;
+    switch (label) {
+      case _TransferLabel.sender:
+        senderToken = token;
+      case _TransferLabel.receiver:
+        receiverToken = token;
+    }
+  }
+  return (sender: senderToken, receiver: receiverToken);
+}
+
+bool _labelsSwapYOrder(
+  List<String> accounts,
+  String labeledSender,
+  String labeledReceiver,
+) {
+  if (accounts.length != 2) return false;
+  final accountSet = {accounts[0], accounts[1]};
+  if (!accountSet.contains(labeledSender) || !accountSet.contains(labeledReceiver)) {
+    return false;
+  }
+  return labeledSender == accounts[1] && labeledReceiver == accounts[0];
+}
+
+SlipAccountParseResult parseAccountLines(
+  List<OcrLine> lines, {
+  bool enableLabelTieBreak = true,
+}) {
   final sorted = [...lines]..sort((a, b) => a.yTop.compareTo(b.yTop));
 
   OcrLine? amountLine;
@@ -68,9 +117,20 @@ SlipAccountParseResult parseAccountLines(List<OcrLine> lines) {
   }
 
   if (accounts.length == 2) {
+    var sender = accounts[0];
+    var receiver = accounts[1];
+    if (enableLabelTieBreak) {
+      final labeled = _labeledAccountTokens(sorted, amountY);
+      if (labeled.sender != null &&
+          labeled.receiver != null &&
+          _labelsSwapYOrder(accounts, labeled.sender!, labeled.receiver!)) {
+        sender = labeled.sender!;
+        receiver = labeled.receiver!;
+      }
+    }
     return SlipAccountParseResult(
-      senderAccountToken: accounts[0],
-      receiverAccountToken: accounts[1],
+      senderAccountToken: sender,
+      receiverAccountToken: receiver,
       amountToken: amountToken,
       confidence: SlipAccountConfidence.high,
       accountTokensInOrder: accounts,

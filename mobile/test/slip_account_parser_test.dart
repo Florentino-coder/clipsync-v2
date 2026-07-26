@@ -71,4 +71,25 @@ void main() {
     expect(r.confidence, SlipAccountConfidence.needsReview);
     expect(r.receiverAccountToken, isNull);
   });
+
+  test('keyword tie-break only when labels clearly swap Y order', () {
+    final r = parseAccountLines(L([
+      ('ไปยัง xxx-xxx175-6', 100), // appears first in Y
+      ('จาก xxx-xxx690-0', 200),
+      ('3,727.00', 300),
+    ]), enableLabelTieBreak: true);
+    expect(r.confidence, SlipAccountConfidence.high);
+    expect(r.senderAccountToken, contains('690'));
+    expect(r.receiverAccountToken, contains('175'));
+  });
+
+  test('without readable labels, Y order wins even if unusual masks', () {
+    final r = parseAccountLines(L([
+      ('x-3772', 100),
+      ('xxx-xxx954-5', 200),
+      ('190.00', 300),
+    ]));
+    expect(r.senderAccountToken, 'x-3772');
+    expect(r.receiverAccountToken, 'xxx-xxx954-5');
+  });
 }
