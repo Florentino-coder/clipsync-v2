@@ -35,6 +35,21 @@ _BANK_ALIASES: dict[str, tuple[str, ...]] = {
     "GSB": ("GSB", "ออมสิน", "ธนาคารออมสิน", "MYMO"),
     "TTB": ("TTB", "ทหารไทย", "ธนชาต", "ธนาคารทหารไทยธนชาต"),
     "BAY": ("BAY", "กรุงศรี", "ธนาคารกรุงศรีอยุธยา"),
+    "BAAC": (
+        "BAAC",
+        "ธกส",
+        "ธ.ก.ส.",
+        "ธ.ก.ส",
+        "เพื่อการเกษตร",
+        "ธนาคารเพื่อการเกษตรและสหกรณ์การเกษตร",
+    ),
+    "KKP": (
+        "KKP",
+        "เกียรตินาคิน",
+        "เกียรตินาคินภัทร",
+        "KIATNAKIN",
+        "ธนาคารเกียรตินาคินภัทร",
+    ),
 }
 
 
@@ -105,9 +120,16 @@ def _bank_codes_for(value: Any) -> set[str]:
 def _banks_match(ocr_bank: Any, order_bank: Any) -> bool:
     left = _bank_codes_for(ocr_bank)
     right = _bank_codes_for(order_bank)
-    if not left or not right:
+    if left and right:
+        return bool(left & right)
+    # Unknown bank labels (not in whitelist): still match on raw normalized text.
+    if left or right:
         return False
-    return bool(left & right)
+    a = _normalize_bank_text(ocr_bank)
+    b = _normalize_bank_text(order_bank)
+    if not a or not b:
+        return False
+    return a == b or a in b or b in a
 
 
 def _ocr_receiver_bank(ocr: Mapping[str, Any]) -> str:

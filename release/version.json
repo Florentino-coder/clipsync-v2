@@ -3,11 +3,11 @@
   "released_at": "2026-07-26",
   "note": "clipsync-v2 TEST pipeline only — production clipsync still uses android-latest on the other repo",
   "pc": {
-    "version": "0.9.19",
+    "version": "0.9.20",
     "installer_url": "https://github.com/Florentino-coder/clipsync-v2/releases/download/slip-test-latest/ClipSyncPC_Setup.exe",
     "portable_url": "https://github.com/Florentino-coder/clipsync-v2/releases/download/slip-test-latest/ClipSyncPC.exe",
     "required": false,
-    "notes": "0.9.19 slip_status resolve ignores amount-like orderId; map to acct: via pending amount"
+    "notes": "0.9.20 BAAC/KKP bank aliases + raw unknown bank label match fallback"
   },
   "android": {
     "version": "0.9.15+42",
@@ -16,8 +16,8 @@
     "notes": "0.9.15+42 mute withdraw heads-up switch (queue/inbox keep syncing); clear pending amount fallback from 0.9.14+41"
   },
   "extension": {
-    "version": "1.0.52",
+    "version": "1.0.53",
     "download_url": "",
-    "notes": "1.0.52 scrape prefers เลขบัญชี over username (09x bank vs 06x user); Search auto ON/OFF; HUD layout from 1.0.51"
+    "notes": "1.0.53 BAAC (ธกส) + KKP (เกียรตินาคิน) aliases; scrape keeps raw Thai bank when code unknown"
   }
 }

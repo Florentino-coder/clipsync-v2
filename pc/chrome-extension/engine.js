@@ -32,6 +32,24 @@
     GSB: ['ธนาคารออมสิน', 'ออมสิน', 'GSB'],
     TTB: ['ธนาคารทหารไทยธนชาต', 'ทหารไทย', 'ธนชาต', 'TTB', 'ttb'],
     BAY: ['ธนาคารกรุงศรีอยุธยา', 'กรุงศรี', 'BAY', 'Krungsri'],
+    BAAC: [
+      'ธนาคารเพื่อการเกษตรและสหกรณ์การเกษตร',
+      'เพื่อการเกษตร',
+      'ธ.ก.ส.',
+      'ธ.ก.ส',
+      'ธกส',
+      'BAAC',
+      'baac',
+    ],
+    KKP: [
+      'ธนาคารเกียรตินาคินภัทร',
+      'เกียรตินาคินภัทร',
+      'เกียรตินาคิน',
+      'KKP',
+      'kkp',
+      'Kiatnakin',
+      'kiatnakin',
+    ],
   };
 
   const BANK_FULL_TH = {
@@ -42,6 +60,8 @@
     GSB: 'ธนาคารออมสิน',
     TTB: 'ธนาคารทหารไทยธนชาต',
     BAY: 'ธนาคารกรุงศรีอยุธยา',
+    BAAC: 'ธนาคารเพื่อการเกษตรและสหกรณ์การเกษตร',
+    KKP: 'ธนาคารเกียรตินาคินภัทร',
   };
 
   function getDocument(doc) {
@@ -645,6 +665,14 @@
       ['GSB', ['ออมสิน', 'gsb', 'mymo']],
       ['TTB', ['ทหารไทย', 'ธนชาต', 'ttb']],
       ['BAY', ['กรุงศรี', 'bay', 'krungsri']],
+      [
+        'BAAC',
+        ['ธกส', 'ธ.ก.ส.', 'ธ.ก.ส', 'เพื่อการเกษตร', 'baac', 'ธนาคารเพื่อการเกษตร'],
+      ],
+      [
+        'KKP',
+        ['เกียรตินาคินภัทร', 'เกียรตินาคิน', 'kkp', 'kiatnakin', 'ธนาคารเกียรตินาคิน'],
+      ],
     ];
     const skipNameExact = new Set([
       'pending',
@@ -677,6 +705,30 @@
       for (const [code, aliases] of bankNeedles) {
         if (aliases.some((a) => lower.includes(String(a).toLowerCase()) || text.includes(a))) {
           return code;
+        }
+      }
+      return '';
+    }
+
+    /** When code whitelist misses, keep labeled Thai bank text for downstream match. */
+    function pickRawBankLabel(text, cells) {
+      const labeledRe =
+        /ชื่อธนาคาร\s*[:：]?\s*([^\n]{2,80}?)(?=\s*(?:ชื่อบัญชี|เลขบัญชี|ยูส|$))/;
+      for (const cell of cells || []) {
+        const raw = (cell.textContent || '').trim().replace(/\s+/g, ' ');
+        const m = labeledRe.exec(raw);
+        if (m) {
+          const candidate = m[1].trim().replace(/\s+/g, ' ');
+          if (candidate) return candidate;
+        }
+      }
+      const flat = String(text || '').replace(/\s+/g, ' ');
+      const m2 = labeledRe.exec(flat);
+      if (m2) return m2[1].trim().replace(/\s+/g, ' ');
+      for (const cell of cells || []) {
+        const t = (cell.textContent || '').trim().replace(/\s+/g, ' ');
+        if (/^ธนาคาร/.test(t) && t.length >= 4 && t.length < 60 && !/\d{6,}/.test(t)) {
+          return t;
         }
       }
       return '';
@@ -876,6 +928,10 @@
       }
 
       let bank = matchBankCode(text);
+      if (!bank) {
+        const rawBank = pickRawBankLabel(text, cells);
+        if (rawBank) bank = rawBank;
+      }
       const name = pickNameFromCells(cells);
       const approvedAt = pickApprovedAt(cells, text);
 

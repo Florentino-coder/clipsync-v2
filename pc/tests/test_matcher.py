@@ -319,6 +319,84 @@ def test_bank_match_skipped_when_ocr_has_no_receiver_bank():
     assert matched["order_id"] == "a"
 
 
+def test_baac_and_kkp_bank_aliases_match():
+    cfg = {
+        **CFG,
+        "matching": {
+            "require_account_last4_match": True,
+            "require_bank_match": True,
+            "prevent_duplicate_ref_number": True,
+        },
+    }
+    ocr_baac = {
+        "amount": 100.0,
+        "receiver_account_last4": "4567",
+        "receiver_bank": "BAAC",
+        "ref_number": "REF-BAAC",
+        "ocr_confidence": 0.97,
+    }
+    orders_baac = [
+        {
+            "order_id": "baac1",
+            "amount": 100.0,
+            "account_last4": "4567",
+            "bank": "ธกส",
+        },
+    ]
+    matched = match_order(ocr_baac, orders_baac, cfg, used_refs=set())
+    assert matched is not None
+    assert matched["order_id"] == "baac1"
+
+    ocr_kkp = {
+        "amount": 200.0,
+        "receiver_account_last4": "8899",
+        "receiver_bank": "เกียรตินาคิน",
+        "ref_number": "REF-KKP",
+        "ocr_confidence": 0.97,
+    }
+    orders_kkp = [
+        {
+            "order_id": "kkp1",
+            "amount": 200.0,
+            "account_last4": "8899",
+            "bank": "KKP",
+        },
+    ]
+    matched_kkp = match_order(ocr_kkp, orders_kkp, cfg, used_refs=set())
+    assert matched_kkp is not None
+    assert matched_kkp["order_id"] == "kkp1"
+
+
+def test_unknown_raw_bank_labels_still_match():
+    """When neither side maps to a known code, equal Thai labels can still match."""
+    cfg = {
+        **CFG,
+        "matching": {
+            "require_account_last4_match": True,
+            "require_bank_match": True,
+            "prevent_duplicate_ref_number": True,
+        },
+    }
+    ocr = {
+        "amount": 50.0,
+        "receiver_account_last4": "1122",
+        "receiver_bank": "ธนาคารทดสอบไม่รู้จัก",
+        "ref_number": "REF-RAW",
+        "ocr_confidence": 0.97,
+    }
+    orders = [
+        {
+            "order_id": "raw1",
+            "amount": 50.0,
+            "account_last4": "1122",
+            "bank": "ธนาคารทดสอบไม่รู้จัก",
+        },
+    ]
+    matched = match_order(ocr, orders, cfg, used_refs=set())
+    assert matched is not None
+    assert matched["order_id"] == "raw1"
+
+
 def test_dom_scrape_amount_with_commas_matches():
     """Jinbao scrape yields '1,097.00' — must still match float OCR amounts."""
     orders = [{"order_id": "row-1", "amount": "1,097.00", "account_last4": ""}]

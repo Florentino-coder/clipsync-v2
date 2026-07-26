@@ -340,6 +340,85 @@ describe('deepFindByText + findRow + findConfirmButton', () => {
     assert.equal(orders[0].account_last4, '1359');
   });
 
+  it('scrapePendingOrders maps ธกส alias to BAAC', () => {
+    const dom = new JSDOM(`<!DOCTYPE html><body>
+      <table><tbody>
+        <tr>
+          <td>1</td>
+          <td>
+            <div>ยูสเซอร์เนม 0806609953</div>
+            <div>ชื่อธนาคาร ธกส</div>
+            <div>ชื่อบัญชีธนาคาร สมหญิง รักดี</div>
+            <div>เลขบัญชีธนาคาร 0201234567</div>
+          </td>
+          <td>500.00</td>
+          <td>อนุมัติแล้ว</td>
+        </tr>
+      </tbody></table>
+    </body>`);
+    global.document = dom.window.document;
+    const profile = {
+      profile_id: 'jinbao356_v1',
+      row_selector_hints: ['table tbody tr'],
+    };
+    const orders = scrapePendingOrders(profile);
+    assert.equal(orders.length, 1, JSON.stringify(orders));
+    assert.equal(orders[0].bank, 'BAAC');
+    assert.equal(orders[0].account, '0201234567');
+  });
+
+  it('scrapePendingOrders maps เกียรตินาคิน alias to KKP', () => {
+    const dom = new JSDOM(`<!DOCTYPE html><body>
+      <table><tbody>
+        <tr>
+          <td>1</td>
+          <td>
+            <div>ชื่อธนาคาร ธนาคารเกียรตินาคินภัทร</div>
+            <div>ชื่อบัญชีธนาคาร วิชัย มั่นคง</div>
+            <div>เลขบัญชีธนาคาร 1122334455</div>
+          </td>
+          <td>250.00</td>
+          <td>อนุมัติแล้ว</td>
+        </tr>
+      </tbody></table>
+    </body>`);
+    global.document = dom.window.document;
+    const profile = {
+      profile_id: 'jinbao356_v1',
+      row_selector_hints: ['table tbody tr'],
+    };
+    const orders = scrapePendingOrders(profile);
+    assert.equal(orders.length, 1, JSON.stringify(orders));
+    assert.equal(orders[0].bank, 'KKP');
+    assert.equal(orders[0].account, '1122334455');
+  });
+
+  it('scrapePendingOrders keeps raw Thai bank label when code unknown', () => {
+    const dom = new JSDOM(`<!DOCTYPE html><body>
+      <table><tbody>
+        <tr>
+          <td>1</td>
+          <td>
+            <div>ชื่อธนาคาร ธนาคารทดสอบไม่รู้จัก</div>
+            <div>ชื่อบัญชีธนาคาร ทดสอบ ระบบ</div>
+            <div>เลขบัญชีธนาคาร 9988776655</div>
+          </td>
+          <td>99.00</td>
+          <td>อนุมัติแล้ว</td>
+        </tr>
+      </tbody></table>
+    </body>`);
+    global.document = dom.window.document;
+    const profile = {
+      profile_id: 'jinbao356_v1',
+      row_selector_hints: ['table tbody tr'],
+    };
+    const orders = scrapePendingOrders(profile);
+    assert.equal(orders.length, 1, JSON.stringify(orders));
+    assert.equal(orders[0].bank, 'ธนาคารทดสอบไม่รู้จัก');
+    assert.equal(orders[0].account, '9988776655');
+  });
+
   it('scrapePendingOrders accepts whole-baht amounts on approved rows', () => {
     const dom = new JSDOM(`<!DOCTYPE html><body>
       <div class="el-tabs__item is-active">รายการที่อนุมัติแล้ว</div>

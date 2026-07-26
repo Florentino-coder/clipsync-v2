@@ -108,6 +108,8 @@ function showResultBanner(ok, detail) {
       GSB: 'ธนาคารออมสิน',
       TTB: 'ธนาคารทหารไทยธนชาต',
       BAY: 'ธนาคารกรุงศรีอยุธยา',
+      BAAC: 'ธนาคารเพื่อการเกษตรและสหกรณ์การเกษตร',
+      KKP: 'ธนาคารเกียรตินาคินภัทร',
     };
     if (map[upper]) out.bank_name_th = map[upper];
     else if (!out.bank_name_th && raw) {
