@@ -40,6 +40,8 @@ class _WithdrawInboxPageState extends State<WithdrawInboxPage> {
         return 'รอโอน';
       case WithdrawItemState.processing:
         return 'กำลังดำเนินการ';
+      case WithdrawItemState.done:
+        return 'สำเร็จ';
       case WithdrawItemState.failed:
         return 'ไม่สำเร็จ';
       case null:
@@ -92,7 +94,7 @@ class _WithdrawInboxPageState extends State<WithdrawInboxPage> {
 
   @override
   Widget build(BuildContext context) {
-    final pending = widget.queue.pending;
+    final items = widget.queue.visibleOrders;
     final activeId = widget.queue.active?.orderId;
     final cs = Theme.of(context).colorScheme;
 
@@ -100,14 +102,14 @@ class _WithdrawInboxPageState extends State<WithdrawInboxPage> {
       appBar: AppBar(
         title: const Text('รายการถอนรอโอน'),
         actions: [
-          if (pending.isNotEmpty)
+          if (widget.queue.pending.isNotEmpty)
             TextButton(
               onPressed: () => unawaited(_confirmClearPending()),
               child: const Text('เคลียร์งาน'),
             ),
         ],
       ),
-      body: pending.isEmpty
+      body: items.isEmpty
           ? Center(
               child: Text(
                 'ไม่มีรายการถอนรอโอน',
@@ -119,10 +121,10 @@ class _WithdrawInboxPageState extends State<WithdrawInboxPage> {
             )
           : ListView.separated(
               padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
-              itemCount: pending.length,
+              itemCount: items.length,
               separatorBuilder: (_, __) => const Divider(height: 1),
               itemBuilder: (context, index) {
-                final order = pending[index];
+                final order = items[index];
                 final canCopy = widget.queue.canCopy(order.orderId);
                 final isActive = order.orderId == activeId;
                 final state = widget.queue.stateOf(order.orderId);

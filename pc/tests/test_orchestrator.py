@@ -147,6 +147,62 @@ async def test_normal_event_calls_confirm(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_auto_confirmed_emits_slip_status_done(tmp_path: Path):
+    statuses: list[dict] = []
+    bridge = MagicMock()
+    bridge.push_confirm_order = AsyncMock()
+    orch = SlipOrchestrator(
+        CFG,
+        chrome_bridge=bridge,
+        shared_secret=SECRET,
+        audit_path=tmp_path / "audit.jsonl",
+        seen_events_path=tmp_path / "seen_events.json",
+        used_refs_path=tmp_path / "used_refs.json",
+        confirm_timeout=0.2,
+        send_slip_status=lambda p: statuses.append(p),
+    )
+    orch.on_pending_orders(
+        {
+            "type": "pending_orders",
+            "orders": [
+                {
+                    "orderId": "1234",
+                    "amount": 350.0,
+                    "account": "11116789",
+                    "accountLast4": "6789",
+                    "bank": "KBANK",
+                }
+            ],
+        }
+    )
+
+    async def _reply() -> None:
+        await asyncio.sleep(0.02)
+        orch.on_confirm_result(
+            {
+                "type": "confirm_result",
+                "orderId": "1234",
+                "ok": True,
+                "verified": True,
+                "reason": None,
+            }
+        )
+
+    reply_task = asyncio.create_task(_reply())
+    result = await orch.handle_slip_event(EVENT, source="usb")
+    await reply_task
+
+    assert result["decision"] == "auto_confirmed"
+    assert statuses, "expected at least one slip_status emit"
+    done = [s for s in statuses if s.get("stage") == "done"]
+    assert done, statuses
+    assert done[-1]["action"] == "slip_status"
+    assert done[-1]["order_id"] == "1234"
+    assert done[-1]["job_id"] == "evt-001"
+    assert done[-1]["message_th"] == "สำเร็จ"
+
+
+@pytest.mark.asyncio
 async def test_over_threshold_pending_review_no_confirm(tmp_path: Path):
     bridge = MagicMock()
     bridge.push_confirm_order = AsyncMock()

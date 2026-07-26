@@ -342,6 +342,57 @@ async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
                     order_id.strip()[:40],
                 )
 
+            elif action == "slip_status":
+                if not peer_id:
+                    continue
+
+                stage = msg.get("stage")
+                if stage not in ("received", "processing", "done", "failed"):
+                    continue
+
+                job_id = str(msg.get("job_id") or "").strip()
+                order_id = str(msg.get("order_id") or "").strip()
+                if not job_id and not order_id:
+                    continue
+
+                amount = msg.get("amount", "")
+                message_th = msg.get("message_th", "")
+                reason = msg.get("reason", "")
+                ts = msg.get("ts", 0)
+                try:
+                    ts_i = int(ts)
+                except (TypeError, ValueError):
+                    ts_i = 0
+
+                payload = json.dumps(
+                    {
+                        "type": "slip_status",
+                        "job_id": job_id,
+                        "order_id": order_id,
+                        "amount": str(amount) if amount is not None else "",
+                        "stage": stage,
+                        "message_th": str(message_th) if message_th is not None else "",
+                        "reason": str(reason) if reason is not None else "",
+                        "ts": ts_i,
+                    },
+                    ensure_ascii=False,
+                )
+
+                dead: set[Ws] = set()
+                for ph in list(phones.get(peer_id, set())):
+                    try:
+                        await ph.send_str(payload)
+                    except Exception:
+                        dead.add(ph)
+                phones[peer_id] -= dead
+                log.info(
+                    "SSTAT %s -> %s phone(s) stage=%s order=%s",
+                    fmt(peer_id),
+                    len(phones.get(peer_id, set())),
+                    stage,
+                    (order_id or job_id)[:40],
+                )
+
     finally:
         await unregister(ws)
 

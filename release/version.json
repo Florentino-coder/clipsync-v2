@@ -3,17 +3,17 @@
   "released_at": "2026-07-26",
   "note": "clipsync-v2 TEST pipeline only — production clipsync still uses android-latest on the other repo",
   "pc": {
-    "version": "0.9.16",
+    "version": "0.9.17",
     "installer_url": "https://github.com/Florentino-coder/clipsync-v2/releases/download/slip-test-latest/ClipSyncPC_Setup.exe",
     "portable_url": "https://github.com/Florentino-coder/clipsync-v2/releases/download/slip-test-latest/ClipSyncPC.exe",
     "required": false,
-    "notes": "0.9.16 pause Search + request scrape on slip; retry no_match within 4s"
+    "notes": "0.9.17 emit slip_status done on auto/manual confirm → phones"
   },
   "android": {
-    "version": "0.9.11+38",
+    "version": "0.9.12+39",
     "url": "https://github.com/Florentino-coder/clipsync-v2/releases/download/slip-test-latest/ClipSync-slip.apk",
     "required": false,
-    "notes": "Slip OCR: จาก/ไปยัง by vertical account order (HIGH vs NEEDS_REVIEW); no single-masked guess."
+    "notes": "slip_status done → inbox สำเร็จ ~1.5s then remove; cancel shade"
   },
   "extension": {
     "version": "1.0.48",

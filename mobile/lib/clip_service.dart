@@ -18,7 +18,7 @@ import 'withdraw/withdraw_ws.dart';
 // - ws://YOUR_VPS_IP:8765
 // - wss://clipsync-relay.onrender.com
 const kRelayUrl = 'wss://clipsync-relay.onrender.com';
-const kAppVersion = '0.9.11+38';
+const kAppVersion = '0.9.12+39';
 
 /// SharedPreferences key for pairing v2 HMAC secret (see [slip_bootstrap.dart]).
 const kSharedSecretPrefKey = 'shared_secret';
@@ -219,6 +219,23 @@ class ClipTaskHandler extends TaskHandler {
                   );
                 } catch (e) {
                   _sendDebug('withdraw notify sync error: $e');
+                }
+                break;
+
+              case 'slip_status':
+                final queue = WithdrawQueueStore.instance;
+                handleSlipStatusMessage(msg, queue);
+                FlutterForegroundTask.sendDataToMain({
+                  'type': 'slip_status',
+                  ...msg,
+                });
+                try {
+                  await WithdrawNotifyService.instance.syncFromQueue(
+                    queue,
+                    allowHeadsUp: false,
+                  );
+                } catch (e) {
+                  _sendDebug('slip_status sync error: $e');
                 }
                 break;
 

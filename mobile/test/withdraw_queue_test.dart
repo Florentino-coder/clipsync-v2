@@ -79,4 +79,23 @@ void main() {
     expect(q.stateOf('B'), WithdrawItemState.processing);
     expect(q.canCopy('A'), isFalse);
   });
+
+  test('markSucceeded sets done and hides copy but stays visible', () {
+    final q = WithdrawQueue();
+    q.upsert(order('A', ts: 1));
+    q.markSucceeded('A');
+    expect(q.stateOf('A'), WithdrawItemState.done);
+    expect(q.canCopy('A'), isFalse);
+    expect(q.pending, isEmpty);
+    expect(q.visibleOrders.map((o) => o.orderId), ['A']);
+  });
+
+  test('markDone after succeeded removes from visibleOrders', () {
+    final q = WithdrawQueue();
+    q.upsert(order('A', ts: 1));
+    q.markSucceeded('A');
+    q.markDone('A');
+    expect(q.visibleOrders, isEmpty);
+    expect(q.stateOf('A'), isNull);
+  });
 }

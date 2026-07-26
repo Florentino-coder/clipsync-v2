@@ -258,6 +258,32 @@ class _HomeScreenState extends State<HomeScreen> {
           wasEmpty: wasEmpty,
         ),
       );
+    } else if (type == 'slip_status') {
+      handleSlipStatusMessage(msg, _withdrawQueue);
+      setState(() {});
+      final orderId = msg['order_id'] as String? ?? '';
+      final stage = msg['stage'] as String? ?? '';
+      _addEvent('Slip status $stage $orderId');
+      unawaited(
+        WithdrawNotifyService.instance.syncFromQueue(
+          _withdrawQueue,
+          allowHeadsUp: false,
+        ),
+      );
+      if (stage == 'done' && orderId.isNotEmpty) {
+        Future<void>.delayed(const Duration(milliseconds: 1500), () {
+          if (_withdrawQueue.stateOf(orderId) == WithdrawItemState.done) {
+            _withdrawQueue.markDone(orderId);
+            if (mounted) setState(() {});
+            unawaited(
+              WithdrawNotifyService.instance.syncFromQueue(
+                _withdrawQueue,
+                allowHeadsUp: false,
+              ),
+            );
+          }
+        });
+      }
     } else if (type == 'withdraw_copy') {
       final action = msg['action'] as String? ?? '';
       final text = msg['text'] as String? ?? '';
@@ -562,6 +588,31 @@ class _HomeScreenState extends State<HomeScreen> {
                 allowHeadsUp: true,
                 wasEmpty: wasEmpty,
               );
+            } else if (type == 'slip_status') {
+              handleSlipStatusMessage(msg, _withdrawQueue);
+              if (!mounted) return;
+              setState(() {});
+              final orderId = msg['order_id'] as String? ?? '';
+              final stage = msg['stage'] as String? ?? '';
+              _addEvent('Fallback slip status $stage $orderId');
+              await WithdrawNotifyService.instance.syncFromQueue(
+                _withdrawQueue,
+                allowHeadsUp: false,
+              );
+              if (stage == 'done' && orderId.isNotEmpty) {
+                Future<void>.delayed(const Duration(milliseconds: 1500), () {
+                  if (_withdrawQueue.stateOf(orderId) == WithdrawItemState.done) {
+                    _withdrawQueue.markDone(orderId);
+                    if (mounted) setState(() {});
+                    unawaited(
+                      WithdrawNotifyService.instance.syncFromQueue(
+                        _withdrawQueue,
+                        allowHeadsUp: false,
+                      ),
+                    );
+                  }
+                });
+              }
             } else if (type == 'heartbeat_ack') {
               return;
             }

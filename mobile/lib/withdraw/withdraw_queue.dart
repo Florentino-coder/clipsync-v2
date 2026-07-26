@@ -1,6 +1,6 @@
 import 'withdraw_order.dart';
 
-enum WithdrawItemState { pending, processing, failed }
+enum WithdrawItemState { pending, processing, done, failed }
 
 class WithdrawQueue {
   final Map<String, WithdrawOrder> _orders = {};
@@ -12,6 +12,13 @@ class WithdrawQueue {
     final list = _orders.values
         .where((o) => _states[o.orderId] == WithdrawItemState.pending)
         .toList();
+    list.sort((a, b) => b.ts.compareTo(a.ts));
+    return list;
+  }
+
+  /// Pending + processing + done + failed (newest first) for inbox display.
+  List<WithdrawOrder> get visibleOrders {
+    final list = _orders.values.toList();
     list.sort((a, b) => b.ts.compareTo(a.ts));
     return list;
   }
@@ -33,7 +40,8 @@ class WithdrawQueue {
     final existing = _states[order.orderId];
     _orders[order.orderId] = order;
     if (existing == WithdrawItemState.failed ||
-        existing == WithdrawItemState.processing) {
+        existing == WithdrawItemState.processing ||
+        existing == WithdrawItemState.done) {
       // Keep safety state — silent re-notify must not unlock copy.
       return;
     }
@@ -65,6 +73,12 @@ class WithdrawQueue {
     if (_activeOverride == orderId) _activeOverride = null;
   }
 
+  void markSucceeded(String orderId) {
+    if (!_orders.containsKey(orderId)) return;
+    _states[orderId] = WithdrawItemState.done;
+    if (_activeOverride == orderId) _activeOverride = null;
+  }
+
   void markDone(String orderId) {
     _orders.remove(orderId);
     _states.remove(orderId);
@@ -81,7 +95,7 @@ class WithdrawQueue {
 
   WithdrawItemState? stateOf(String orderId) => _states[orderId];
 
-  /// Clears pending withdraw items only (keeps processing/failed).
+  /// Clears pending withdraw items only (keeps processing/failed/done).
   void clearPending() {
     final ids = _orders.keys
         .where((id) => _states[id] == WithdrawItemState.pending)

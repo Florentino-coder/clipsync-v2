@@ -22,7 +22,11 @@ from clipsync.matcher import (
 )
 from clipsync.seen_events import SeenEvents, default_seen_events_path
 from clipsync.slip_ocr import resolve_sender_account_last4
-from clipsync.withdraw_notify import build_withdraw_notify_payload, new_orders_since
+from clipsync.withdraw_notify import (
+    build_slip_status_payload,
+    build_withdraw_notify_payload,
+    new_orders_since,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +37,7 @@ SLIP_SEARCH_PAUSE_MS = 8000
 
 SendAckCallback = Callable[[str], Awaitable[None] | None]
 SendWithdrawNotifyCallback = Callable[[dict[str, Any]], None]
+SendSlipStatusCallback = Callable[[dict[str, Any]], None]
 ActivityLogCallback = Callable[[str], None]
 
 
@@ -128,6 +133,7 @@ class SlipOrchestrator:
         confirm_timeout: float = CONFIRM_TIMEOUT_DEFAULT,
         send_ack: Optional[SendAckCallback] = None,
         send_withdraw_notify: Optional[SendWithdrawNotifyCallback] = None,
+        send_slip_status: Optional[SendSlipStatusCallback] = None,
         activity_log: Optional[ActivityLogCallback] = None,
         seen_events: Optional[SeenEvents] = None,
     ) -> None:
@@ -141,6 +147,7 @@ class SlipOrchestrator:
         self._confirm_timeout = float(confirm_timeout)
         self._send_ack = send_ack
         self._send_withdraw_notify = send_withdraw_notify
+        self._send_slip_status = send_slip_status
         self._activity_log = activity_log
 
         if seen_events is not None:
@@ -171,6 +178,25 @@ class SlipOrchestrator:
     ) -> None:
         """Attach/replace the withdraw_notify emit callback."""
         self._send_withdraw_notify = send_withdraw_notify
+
+    def set_send_slip_status(
+        self, send_slip_status: Optional[SendSlipStatusCallback]
+    ) -> None:
+        """Attach/replace the slip_status emit callback."""
+        self._send_slip_status = send_slip_status
+
+    def _emit_slip_status(self, payload: dict[str, Any]) -> None:
+        send = self._send_slip_status
+        if send is None or not isinstance(payload, dict):
+            return
+        try:
+            send(payload)
+        except Exception:
+            logger.exception(
+                "send_slip_status failed for order_id=%s stage=%s",
+                payload.get("order_id"),
+                payload.get("stage"),
+            )
 
     def on_pending_orders(self, data: Mapping[str, Any] | None) -> None:
         """Chrome-bridge callback — must never raise (keeps WS alive)."""
@@ -471,6 +497,14 @@ class SlipOrchestrator:
                 if ref is not None:
                     self._used_refs.add(str(ref))
                     save_used_refs(self._used_refs, self._used_refs_path)
+                self._emit_slip_status(
+                    build_slip_status_payload(
+                        job_id=event_id,
+                        order_id=order_id,
+                        amount=event_data.get("amount"),
+                        stage="done",
+                    )
+                )
                 out = self._audit_and_return(
                     event_data, matched, "auto_confirmed", confirmed_by="system"
                 )

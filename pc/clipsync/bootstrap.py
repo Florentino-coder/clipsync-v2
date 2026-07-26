@@ -14,6 +14,11 @@ from clipsync.license import verify_token
 from clipsync.orchestrator import SlipOrchestrator
 from clipsync.transport.manager import TransportManager
 from clipsync.transport.usb import UsbTransport
+from clipsync.withdraw_notify import (
+    build_slip_status_payload,
+    resolve_order_id_for_slip_status,
+    should_emit_slip_status,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +57,8 @@ class SlipBootstrap:
         self._bridge: Optional[ChromeBridge] = None
         self._manager: Optional[TransportManager] = None
         self._cfg: dict[str, Any] = {}
+        self._last_slip_status_key: str | None = None
+        self._last_slip_status_at: float = 0.0
 
     def start(self) -> None:
         if self._thread is not None:
@@ -106,6 +113,7 @@ class SlipBootstrap:
             chrome_bridge=self._bridge,
             shared_secret=self._shared_secret,
             send_withdraw_notify=self._emit_withdraw_notify,
+            send_slip_status=self._emit_slip_status,
             activity_log=self._app_log,
         )
 
@@ -229,6 +237,51 @@ class SlipBootstrap:
         else:
             self._app_log(f"WDRAW skip {order_id}: client loop not running")
 
+    def _emit_slip_status(self, payload: dict[str, Any]) -> None:
+        """Schedule slip_status on the ClipSyncClient WS loop (deduped ~2s)."""
+        import time
+
+        job_id = str((payload or {}).get("job_id") or "").strip()
+        order_id = str((payload or {}).get("order_id") or "").strip()
+        stage = str((payload or {}).get("stage") or "").strip()
+        now = time.monotonic()
+        key = f"{job_id}|{order_id}|{stage}"
+        if not should_emit_slip_status(
+            self._last_slip_status_key,
+            job_id=job_id,
+            order_id=order_id,
+            stage=stage,
+            now=now,
+            last_at=self._last_slip_status_at,
+        ):
+            return
+        schedule = getattr(self._client, "schedule_slip_status", None)
+        if callable(schedule):
+            ws = getattr(self._client, "ws", None)
+            loop = getattr(self._client, "loop", None)
+            if not ws or not loop:
+                self._app_log(f"SSTAT skip {order_id or job_id}: no relay WS")
+                return
+            schedule(payload)
+            self._last_slip_status_key = key
+            self._last_slip_status_at = now
+            self._app_log(f"SSTAT emit {order_id or job_id} stage={stage}")
+            return
+        send = getattr(self._client, "send_slip_status", None)
+        if send is None:
+            self._app_log(f"SSTAT skip {order_id or job_id}: send not available")
+            return
+        loop = getattr(self._client, "loop", None)
+        if loop is not None and loop.is_running():
+            result = send(payload)
+            if asyncio.iscoroutine(result):
+                asyncio.run_coroutine_threadsafe(result, loop)
+            self._last_slip_status_key = key
+            self._last_slip_status_at = now
+            self._app_log(f"SSTAT emit {order_id or job_id} stage={stage}")
+        else:
+            self._app_log(f"SSTAT skip {order_id or job_id}: client loop not running")
+
     def _on_confirm_result(self, data: dict[str, Any]) -> None:
         reason = data.get("reason")
         ok = data.get("ok")
@@ -245,6 +298,20 @@ class SlipBootstrap:
                 amount=amount or match_key,
                 decision="admin_manual",
             )
+            pending = self._orchestrator._pending_orders if self._orchestrator else []
+            order_id = resolve_order_id_for_slip_status(data, pending=pending)
+            job_id = event_id or order_id
+            if order_id or job_id:
+                self._emit_slip_status(
+                    build_slip_status_payload(
+                        job_id=job_id,
+                        order_id=order_id,
+                        amount=amount
+                        if amount not in (None, "", "-")
+                        else data.get("matchKey"),
+                        stage="done",
+                    )
+                )
         elif reason == "dry_run":
             msg = f"dry-run พร้อมกดจริง ({match_key}) — ดูกรอบแดงบนหน้าเว็บ"
             self._app_log(f"Extension: {msg}")

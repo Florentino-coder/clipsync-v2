@@ -138,4 +138,22 @@ void main() {
     expect(cleared, isTrue);
     expect(find.text('ไม่มีรายการถอนรอโอน'), findsOneWidget);
   });
+
+  testWidgets('done order shows สำเร็จ in inbox', (tester) async {
+    final q = WithdrawQueue();
+    q.upsert(WithdrawOrder(
+      orderId: 'A',
+      amount: '100.00',
+      account: '4774090171',
+      bank: 'KBANK',
+      accountName: '',
+      ts: 1,
+    ));
+    q.markSucceeded('A');
+
+    await tester.pumpWidget(
+      MaterialApp(home: WithdrawInboxPage(queue: q)),
+    );
+    expect(find.textContaining('สำเร็จ'), findsWidgets);
+  });
 }

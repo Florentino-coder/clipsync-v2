@@ -45,7 +45,7 @@ from clipsync.ui.debug_panel import DebugPanel
 from clipsync.ui.settings_panel import SettingsPanel
 
 APP_NAME = "ClipSync PC"
-APP_VERSION = "0.9.16"
+APP_VERSION = "0.9.17"
 AUTHOR_NAME = "Florentino356"
 DEFAULT_RELAY_URL = "wss://clipsync-relay.onrender.com"
 UPDATE_MANIFEST_URL = (
@@ -299,6 +299,21 @@ class ClipSyncClient:
             return
         try:
             asyncio.run_coroutine_threadsafe(self.send_withdraw_notify(payload), self.loop)
+        except Exception:
+            pass
+
+    async def send_slip_status(self, payload: dict[str, Any]) -> None:
+        """Send typed slip_status to relay (PC → phones)."""
+        if not self.ws or not isinstance(payload, dict):
+            return
+        await self.ws.send(json.dumps(payload, ensure_ascii=False))
+
+    def schedule_slip_status(self, payload: dict[str, Any]) -> None:
+        """Thread-safe schedule of send_slip_status onto the client WS loop."""
+        if not self.loop or not self.ws:
+            return
+        try:
+            asyncio.run_coroutine_threadsafe(self.send_slip_status(payload), self.loop)
         except Exception:
             pass
 
