@@ -274,6 +274,21 @@ xxx-xxx175-6
       expect(parsed.senderAccountLast4, isNotNull);
       expect(parsed.receiverAccountLast4, '1756');
     });
+    test('Latin-only dual accounts HIGH without From/To words', () {
+      final parsed = ScbParser().parse('''
+SCB Easy
+Transfer successful
+202607268XRZLCrFvm0JLRag6
+xxx-xxx690-0
+xxx-xxx175-6
+3,727.00
+THB
+''');
+      expect(parsed.accountConfidence, SlipAccountConfidence.high);
+      expect(parsed.senderAccountLast4, '6900');
+      expect(parsed.receiverAccountLast4, '1756');
+      expect(parsed.valid, isTrue);
+    });
   });
 
   group('KbankParser', () {
