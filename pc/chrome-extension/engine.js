@@ -3302,6 +3302,54 @@
     if (el && el.parentNode) el.parentNode.removeChild(el);
   }
 
+  const APPROVED_WATCH_HUD_ID = 'clipsync-approved-watch-hud';
+
+  /**
+   * Persistent green HUD (same style as dismiss toast) — only on approved list tab.
+   * Pointer-events none so staff can still click the page.
+   */
+  function showApprovedWatchHud(doc, text) {
+    const document = getDocument(doc);
+    if (!document || !document.body) return null;
+    let hud = document.getElementById(APPROVED_WATCH_HUD_ID);
+    if (!hud) {
+      hud = document.createElement('div');
+      hud.id = APPROVED_WATCH_HUD_ID;
+      hud.setAttribute(
+        'style',
+        'position:fixed;left:8px;bottom:8px;z-index:2147483646;max-width:78vw;' +
+          'background:#111;color:#0f0;font:12px/1.35 monospace;padding:8px 10px;' +
+          'border:1px solid #0f0;border-radius:6px;opacity:0.92;pointer-events:none;'
+      );
+      document.body.appendChild(hud);
+    }
+    hud.textContent = String(
+      text || '[ClipSync] กำลังเฝ้ารายการอนุมัติ — พับหน้าต่างได้'
+    ).slice(0, 240);
+    return hud;
+  }
+
+  function hideApprovedWatchHud(doc) {
+    const document = getDocument(doc);
+    if (!document) return;
+    const el = document.getElementById(APPROVED_WATCH_HUD_ID);
+    if (el && el.parentNode) el.parentNode.removeChild(el);
+  }
+
+  /**
+   * Show/hide watch HUD from detectWithdrawNotifyTab.
+   * @returns {boolean|null} tab kind
+   */
+  function syncApprovedWatchHud(profile, doc) {
+    const kind = detectWithdrawNotifyTab(profile, doc);
+    if (kind === true) {
+      showApprovedWatchHud(doc);
+    } else {
+      hideApprovedWatchHud(doc);
+    }
+    return kind;
+  }
+
   return {
     normalize,
     matchNeedles,
@@ -3343,5 +3391,9 @@
     BUSY_SHIELD_DEFAULT_TIMEOUT_MS,
     showBusyShield,
     hideBusyShield,
+    APPROVED_WATCH_HUD_ID,
+    showApprovedWatchHud,
+    hideApprovedWatchHud,
+    syncApprovedWatchHud,
   };
 });

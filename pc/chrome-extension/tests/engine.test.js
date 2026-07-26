@@ -34,6 +34,10 @@ const {
   showBusyShield,
   hideBusyShield,
   BUSY_SHIELD_ID,
+  APPROVED_WATCH_HUD_ID,
+  showApprovedWatchHud,
+  hideApprovedWatchHud,
+  syncApprovedWatchHud,
 } = require('../engine.js');
 
 const ORDER_FIXTURE = path.join(__dirname, '..', 'fixtures', 'order_list.html');
@@ -2183,5 +2187,53 @@ describe('results count settle helpers', () => {
     assert.equal(isResultsCountStable(['1', '4']), false);
     assert.equal(isResultsCountStable([null, '4']), false);
     assert.equal(isResultsCountStable(['4']), false);
+  });
+});
+
+describe('approved watch HUD', () => {
+  it('showApprovedWatchHud creates green bottom-left monospace badge', () => {
+    const dom = new JSDOM(`<!DOCTYPE html><body></body>`);
+    const document = dom.window.document;
+    const hud = showApprovedWatchHud(document);
+    assert.ok(hud);
+    assert.equal(hud.id, APPROVED_WATCH_HUD_ID);
+    assert.equal(
+      hud.textContent,
+      '[ClipSync] กำลังเฝ้ารายการอนุมัติ — พับหน้าต่างได้'
+    );
+    assert.match(hud.getAttribute('style') || '', /position:\s*fixed/);
+    assert.match(hud.getAttribute('style') || '', /bottom:\s*8px/);
+    assert.match(hud.getAttribute('style') || '', /left:\s*8px/);
+    assert.match(hud.getAttribute('style') || '', /color:\s*#0f0/);
+    assert.match(hud.getAttribute('style') || '', /border:\s*1px solid #0f0/);
+    assert.match(hud.getAttribute('style') || '', /monospace/);
+    assert.match(hud.getAttribute('style') || '', /pointer-events:\s*none/);
+  });
+
+  it('hideApprovedWatchHud removes the badge', () => {
+    const dom = new JSDOM(`<!DOCTYPE html><body></body>`);
+    const document = dom.window.document;
+    showApprovedWatchHud(document);
+    hideApprovedWatchHud(document);
+    assert.equal(document.getElementById(APPROVED_WATCH_HUD_ID), null);
+  });
+
+  it('syncApprovedWatchHud shows on approved tab and hides otherwise', () => {
+    const approvedDom = new JSDOM(
+      `<!DOCTYPE html><body>
+        <div class="el-tabs__item is-active">รายการที่อนุมัติแล้ว</div>
+      </body>`
+    );
+    const pendingDom = new JSDOM(
+      `<!DOCTYPE html><body>
+        <div class="el-tabs__item is-active">รายการรออนุมัติ</div>
+      </body>`
+    );
+    const profile = { ...PROFILE };
+    assert.equal(syncApprovedWatchHud(profile, approvedDom.window.document), true);
+    assert.ok(approvedDom.window.document.getElementById(APPROVED_WATCH_HUD_ID));
+
+    assert.equal(syncApprovedWatchHud(profile, pendingDom.window.document), false);
+    assert.equal(pendingDom.window.document.getElementById(APPROVED_WATCH_HUD_ID), null);
   });
 });

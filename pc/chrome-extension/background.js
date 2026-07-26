@@ -3,7 +3,7 @@
  * Resilient localhost WS client + alarm keepalive (Task 4.2).
  */
 
-importScripts('bundled_profiles.js');
+importScripts('bundled_profiles.js', 'admin_tab_pick.js');
 
 const DEFAULT_WS_URL = 'ws://127.0.0.1:8765';
 const KEEPALIVE_ALARM = 'ws-keepalive';
@@ -20,6 +20,26 @@ const STORAGE_KEYS = {
 let socket = null;
 /** @type {ReturnType<typeof setTimeout>|null} */
 let reconnectTimer = null;
+
+/** tabId → 'approved' | 'pending' | 'unknown' (from content clipsync_tab_role). */
+const tabRoles = Object.create(null);
+
+const pickPreferredAdminTab =
+  (globalThis.ClipSyncAdminTabPick && globalThis.ClipSyncAdminTabPick.pickPreferredAdminTab) ||
+  function fallbackPick(tabs) {
+    if (!tabs || !tabs.length) return null;
+    return tabs
+      .slice()
+      .sort(
+        (a, b) =>
+          Number(Boolean(b.active)) - Number(Boolean(a.active)) ||
+          (b.lastAccessed || 0) - (a.lastAccessed || 0)
+      )[0];
+  };
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  delete tabRoles[tabId];
+});
 
 function setStatus(status) {
   chrome.storage.local.set({ [STORAGE_KEYS.connectionStatus]: status });
@@ -141,15 +161,10 @@ function forwardConfirmToTab(orderId, data, profiles) {
   };
 
   const pickTabAndSend = (tabs) => {
-    // Prefer an ACTIVE tab (user is looking at it), then most recently accessed.
-    const sorted = tabs
-      .slice()
-      .sort(
-        (a, b) =>
-          Number(Boolean(b.active)) - Number(Boolean(a.active)) ||
-          (b.lastAccessed || 0) - (a.lastAccessed || 0)
-      );
-    dispatchToTab(sorted[0]);
+    // Prefer role=approved (withdraw-notify approved list), then active, then lastAccessed.
+    const tab = pickPreferredAdminTab(tabs, tabRoles);
+    if (!tab) return;
+    dispatchToTab(tab);
   };
 
   chrome.tabs.query({ url: patterns }, (tabs) => {
@@ -178,14 +193,7 @@ function forwardControlToAdminTab(data) {
     if (patterns.length === 0) return;
     chrome.tabs.query({ url: patterns }, (tabs) => {
       if (chrome.runtime.lastError || !tabs || tabs.length === 0) return;
-      const sorted = tabs
-        .slice()
-        .sort(
-          (a, b) =>
-            Number(Boolean(b.active)) - Number(Boolean(a.active)) ||
-            (b.lastAccessed || 0) - (a.lastAccessed || 0)
-        );
-      const tab = sorted[0];
+      const tab = pickPreferredAdminTab(tabs, tabRoles);
       if (!tab || tab.id == null) return;
       chrome.tabs.sendMessage(tab.id, data, () => void chrome.runtime.lastError);
     });
@@ -492,6 +500,20 @@ function mainWorldApprovedSearchClick() {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || typeof message !== 'object') return;
 
+  if (message.type === 'clipsync_tab_role') {
+    const tabId = sender && sender.tab && sender.tab.id;
+    if (typeof tabId === 'number') {
+      const role = message.role;
+      if (role === 'approved' || role === 'pending' || role === 'unknown') {
+        tabRoles[tabId] = role;
+      } else {
+        delete tabRoles[tabId];
+      }
+    }
+    sendResponse({ ok: true });
+    return true;
+  }
+
   // Content script (isolated world) asks us to click SweetAlert2 in the MAIN world.
   if (message.type === 'main_world_swal_click') {
     const tabId = sender && sender.tab && sender.tab.id;
@@ -562,15 +584,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           sendResponse({ ok: false, reason: 'admin_tab_not_found' });
           return;
         }
-        const sorted = tabs
-          .slice()
-          .sort(
-            (a, b) =>
-              Number(Boolean(b.active)) - Number(Boolean(a.active)) ||
-              (b.lastAccessed || 0) - (a.lastAccessed || 0)
-          );
+        const tab = pickPreferredAdminTab(tabs, tabRoles);
+        if (!tab || tab.id == null) {
+          sendResponse({ ok: false, reason: 'admin_tab_not_found' });
+          return;
+        }
         chrome.tabs.sendMessage(
-          sorted[0].id,
+          tab.id,
           { type: 'get_approved_search_status' },
           (resp) => {
             if (chrome.runtime.lastError || !resp) {

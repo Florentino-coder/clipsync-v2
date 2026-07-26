@@ -428,6 +428,26 @@ function showResultBanner(ok, detail) {
     }
   }
 
+  /** Tell background this tab is approved / pending / unknown so confirm routes here. */
+  function reportTabRole(kind) {
+    let role = 'unknown';
+    if (kind === true) role = 'approved';
+    else if (kind === false) role = 'pending';
+    sendToBackground({ type: 'clipsync_tab_role', role });
+  }
+
+  function syncWatchHudForProfiles(profiles) {
+    if (typeof E.syncApprovedWatchHud !== 'function') return;
+    const list = activeProfiles(profiles);
+    if (list.length === 0) {
+      if (typeof E.hideApprovedWatchHud === 'function') E.hideApprovedWatchHud(document);
+      reportTabRole(null);
+      return;
+    }
+    const kind = E.syncApprovedWatchHud(list[0], document);
+    reportTabRole(kind);
+  }
+
   function probeAndStoreSearchStatus(profiles, clickResult, intervalMs) {
     if (typeof E.probeApprovedSearchStatus !== 'function') return null;
     const list = activeProfiles(profiles);
@@ -454,6 +474,7 @@ function showResultBanner(ok, detail) {
 
   function runApprovedSearchRefresh(profiles) {
     if (typeof E.maybeClickApprovedSearch !== 'function') return;
+    syncWatchHudForProfiles(profiles);
     for (const profile of activeProfiles(profiles)) {
       const paused = approvedSearchIsPaused();
       const result = paused
@@ -542,6 +563,13 @@ function showResultBanner(ok, detail) {
     restartPendingOrdersTimer(profiles, pollMs);
     restartApprovedSearchTimer(profiles, searchMs);
     probeAndStoreSearchStatus(profiles, null, searchMs);
+    syncWatchHudForProfiles(profiles);
+    // Keep HUD + tab role fresh when staff switches Jinbao tabs without full reload.
+    setInterval(() => {
+      chrome.storage.local.get(['siteProfiles'], ({ siteProfiles }) => {
+        syncWatchHudForProfiles(siteProfiles || profiles);
+      });
+    }, 2000);
   }
 
   chrome.storage.onChanged.addListener((changes, area) => {
