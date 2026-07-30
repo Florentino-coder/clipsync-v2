@@ -47,7 +47,7 @@ from clipsync.ui.settings_panel import SettingsPanel
 APP_NAME = "ClipSync PC"
 APP_VERSION = "0.9.20"
 AUTHOR_NAME = "Florentino356"
-DEFAULT_RELAY_URL = "wss://clipsync-relay.onrender.com"
+DEFAULT_RELAY_URL = "wss://clipsync-relay-ko3c.onrender.com"
 UPDATE_MANIFEST_URL = (
     "https://github.com/Florentino-coder/clipsync/releases/download/"
     "android-latest/version.json"
