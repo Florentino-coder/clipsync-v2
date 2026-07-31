@@ -26,10 +26,11 @@ One-time setup:
 3. Create a fine-grained personal access token with `Contents: Read and write` access to `Florentino-coder/clipsync-apk`.
 4. Add that token to this private repository as an Actions secret named `PUBLIC_RELEASE_TOKEN`.
 
-Current relay WebSocket URL:
+Relay WebSocket failover order (one connection at a time):
 
 ```text
-wss://clipsync-relay.onrender.com
+Primary: wss://clipsync-relay-ko3c.onrender.com
+Backup:  wss://clipsync-relay.onrender.com
 ```
 
 The Windows client opens as a GUI app and stores its machine ID in the current user's app data folder.
@@ -40,8 +41,11 @@ Use the relay URL with the PC client if you run your own server:
 .\ClipSyncPC.exe --relay-url wss://clipsync-relay.onrender.com
 ```
 
-For Android, set this value in `mobile/lib/clip_service.dart`:
+For Android, configure the same primary/backup list in `mobile/lib/clip_service.dart`:
 
 ```dart
-const kRelayUrl = 'wss://clipsync-relay.onrender.com';
+const kRelayUrls = [
+  'wss://clipsync-relay-ko3c.onrender.com',
+  'wss://clipsync-relay.onrender.com',
+];
 ```

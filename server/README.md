@@ -11,13 +11,14 @@ Deploy this folder as a Render Web Service.
 
 The relay reads Render's `PORT` environment variable automatically.
 
-Current relay WebSocket URL:
+Relay WebSocket failover order:
 
 ```text
-wss://clipsync-relay.onrender.com
+Primary: wss://clipsync-relay-ko3c.onrender.com
+Backup:  wss://clipsync-relay.onrender.com
 ```
 
-Use that value in:
+Clients open one WebSocket at a time. They stay on the active relay and try backup only after failure. Use the same order in:
 
-- PC: `ClipSyncPC.exe --relay-url wss://clipsync-relay.onrender.com`
-- Flutter: `const kRelayUrl = 'wss://clipsync-relay.onrender.com';`
+- PC: `ClipSyncPC.exe --relay-url wss://clipsync-relay-ko3c.onrender.com`
+- Flutter: `kRelayUrls` in `mobile/lib/clip_service.dart`

@@ -43,11 +43,16 @@ from clipsync.bootstrap import start_slip_bootstrap
 from clipsync.ui.audit_viewer import AuditViewer
 from clipsync.ui.debug_panel import DebugPanel
 from clipsync.ui.settings_panel import SettingsPanel
+from clipsync.relay_failover import RelaySelector
 
 APP_NAME = "ClipSync PC"
 APP_VERSION = "0.9.20"
 AUTHOR_NAME = "Florentino356"
-DEFAULT_RELAY_URL = "wss://clipsync-relay.onrender.com"
+DEFAULT_RELAY_URLS = [
+    "wss://clipsync-relay-ko3c.onrender.com",
+    "wss://clipsync-relay.onrender.com",
+]
+DEFAULT_RELAY_URL = DEFAULT_RELAY_URLS[0]
 UPDATE_MANIFEST_URL = (
     "https://github.com/Florentino-coder/clipsync/releases/download/"
     "android-latest/version.json"
@@ -228,26 +233,38 @@ def pc_update_from_manifest(manifest: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def resolve_relay_url(args: argparse.Namespace) -> str:
+def resolve_relay_urls(args: argparse.Namespace) -> list[str]:
     config = load_config()
-    configured_url = (
-        args.relay_url
-        or os.getenv("CLIPSYNC_RELAY_URL", "")
-        or str(config.get("relay_url", ""))
-        or DEFAULT_RELAY_URL
-    ).strip()
-    if configured_url:
-        return configured_url
+    urls: list[str] = []
+    if args.relay_url:
+        urls.append(args.relay_url.strip())
+    elif os.getenv("CLIPSYNC_RELAY_URL"):
+        urls.append(os.getenv("CLIPSYNC_RELAY_URL", "").strip())
+    elif config.get("relay_urls") and isinstance(config["relay_urls"], list):
+        urls.extend([str(u).strip() for u in config["relay_urls"] if u])
+    elif config.get("relay_url"):
+        urls.append(str(config["relay_url"]).strip())
 
-    host = (
-        args.relay_host
-        or os.getenv("CLIPSYNC_RELAY_HOST", "")
-        or str(config.get("relay_host", ""))
-    ).strip()
-    port = args.relay_port
-    if not host:
-        return DEFAULT_RELAY_URL
-    return f"ws://{host}:{port}"
+    urls = [url for url in urls if url.startswith(("ws://", "wss://"))]
+
+    if not urls:
+        host = (
+            args.relay_host
+            or os.getenv("CLIPSYNC_RELAY_HOST", "")
+            or str(config.get("relay_host", ""))
+        ).strip()
+        if host:
+            urls.append(f"ws://{host}:{args.relay_port}")
+
+    if not urls:
+        urls = list(DEFAULT_RELAY_URLS)
+    urls = [url for url in urls if url.startswith(("ws://", "wss://"))]
+    return urls
+
+
+def resolve_relay_url(args: argparse.Namespace) -> str:
+    urls = resolve_relay_urls(args)
+    return urls[0] if urls else DEFAULT_RELAY_URL
 
 
 def parse_args() -> argparse.Namespace:
@@ -263,8 +280,12 @@ EventHandler = Callable[[str, dict[str, Any]], None]
 
 
 class ClipSyncClient:
-    def __init__(self, relay_url: str, pc_id: str, on_event: EventHandler) -> None:
-        self.relay_url = relay_url
+    def __init__(self, relay_urls: list[str] | str, pc_id: str, on_event: EventHandler) -> None:
+        if isinstance(relay_urls, str):
+            self.relay_urls = [relay_urls]
+        else:
+            self.relay_urls = relay_urls or list(DEFAULT_RELAY_URLS)
+        self.relay_selector = RelaySelector(self.relay_urls)
         self.pc_id = pc_id
         self.on_event = on_event
         self.running = False
@@ -276,6 +297,10 @@ class ClipSyncClient:
         self.generation = 0
         self.reconnect_step = 0
         self._slip_message_handler: Callable[[dict[str, Any]], Awaitable[None]] | None = None
+
+    @property
+    def current_relay_url(self) -> str:
+        return self.relay_selector.current
 
     def set_slip_message_handler(
         self, handler: Callable[[dict[str, Any]], Awaitable[None]] | None
@@ -360,10 +385,11 @@ class ClipSyncClient:
 
     async def _ws_loop(self, generation: int) -> None:
         while self._is_current(generation):
+            url = self.current_relay_url
             try:
-                self.on_event("status", {"message": "Connecting"})
+                self.on_event("status", {"message": f"Connecting ({url})"})
                 async with websockets.connect(
-                    self.relay_url,
+                    url,
                     ping_interval=None,
                     ping_timeout=20,
                     max_size=200 * 1024,
@@ -371,7 +397,7 @@ class ClipSyncClient:
                     self.ws = ws
                     await ws.send(json.dumps({"action": "register", "id": self.pc_id}))
                     self.reconnect_step = 0
-                    self.on_event("connected", {})
+                    self.on_event("connected", {"url": url})
 
                     async for raw in ws:
                         if not self._is_current(generation):
@@ -379,15 +405,16 @@ class ClipSyncClient:
                         self._handle_server_message(raw)
             except Exception as exc:
                 if self._is_current(generation):
-                    self.on_event("disconnected", {"message": str(exc)})
+                    self.on_event("disconnected", {"message": str(exc), "url": url})
             finally:
                 self.ws = None
 
             if self._is_current(generation):
+                self.relay_selector.failed()
                 delay = next_reconnect_delay(self.reconnect_step)
                 if self.reconnect_step < len(RECONNECT_STEPS_SECONDS) - 1:
                     self.reconnect_step += 1
-                self.on_event("reconnecting", {"delay": delay})
+                self.on_event("reconnecting", {"delay": delay, "next_url": self.current_relay_url})
                 await self._sleep_reconnect(delay, generation)
 
     async def _sleep_reconnect(self, delay: int, generation: int) -> None:
@@ -513,11 +540,11 @@ class ClipSyncClient:
 
 
 class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
-    def __init__(self, relay_url: str, pc_id: str) -> None:
+    def __init__(self, relay_urls: list[str], pc_id: str) -> None:
         super().__init__()
-        self.relay_url = relay_url
+        self.relay_urls = relay_urls
         self.pc_id = pc_id
-        self.client = ClipSyncClient(relay_url, pc_id, self._thread_event)
+        self.client = ClipSyncClient(relay_urls, pc_id, self._thread_event)
         self.online = False
         self.running = False
         self.phone_count = 0
@@ -700,7 +727,7 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
             style="Muted.TLabel",
             font=("Segoe UI", 9, "bold"),
         ).pack(anchor="w")
-        self.relay_var = tk.StringVar(value=self.relay_url)
+        self.relay_var = tk.StringVar(value=self.client.current_relay_url)
         ttk.Entry(
             outer,
             textvariable=self.relay_var,
@@ -1112,8 +1139,10 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
             self._set_status(data.get("message", "Working"), "#e09c18")
         elif name == "connected":
             self.online = True
+            active_url = str(data.get("url", self.client.current_relay_url))
+            self.relay_var.set(active_url)
             self._set_status("Connected", "#19a94b")
-            self._append_log("Connected to relay")
+            self._append_log(f"Connected to relay {active_url}")
         elif name == "registered":
             self.phone_count = int(data.get("phones", 0) or 0)
             self._set_status("Ready for copy", "#19a94b")
@@ -1133,7 +1162,9 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
             self._append_log(f"Disconnected: {data.get('message', '')}")
         elif name == "reconnecting":
             self._set_status("Reconnecting", "#e09c18")
-            self._append_log(f"Reconnect in {data.get('delay', '')} seconds")
+            next_url = str(data.get("next_url", self.client.current_relay_url))
+            self.relay_var.set(next_url)
+            self._append_log(f"Reconnect in {data.get('delay', '')} seconds via {next_url}")
         elif name == "kicked":
             self._set_status("ID is open on another PC", "#d92d20")
             self._append_log("This PC ID was kicked by another connection")
@@ -1332,7 +1363,7 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
         self.after(250, self.destroy)
 
 
-async def run_cli(relay_url: str, pc_id: str) -> None:
+async def run_cli(relay_urls: list[str] | str, pc_id: str) -> None:
     def handle_event(name: str, data: dict[str, Any]) -> None:
         if name == "registered":
             print(f"ID: {fmt_id(pc_id)}")
@@ -1351,7 +1382,7 @@ async def run_cli(relay_url: str, pc_id: str) -> None:
         elif name == "kicked":
             print("This ID is being used elsewhere.")
 
-    client = ClipSyncClient(relay_url, pc_id, handle_event)
+    client = ClipSyncClient(relay_urls, pc_id, handle_event)
     client.running = True
     client.generation += 1
     try:
@@ -1362,16 +1393,16 @@ async def run_cli(relay_url: str, pc_id: str) -> None:
 
 def main() -> None:
     args = parse_args()
-    relay_url = resolve_relay_url(args)
+    relay_urls = resolve_relay_urls(args)
     pc_id = load_or_create_id()
 
     if args.cli or tk is None:
         print(f"{APP_NAME} v{APP_VERSION} - By {AUTHOR_NAME}")
-        print(f"Relay: {relay_url}")
-        asyncio.run(run_cli(relay_url, pc_id))
+        print(f"Relays: {', '.join(relay_urls)}")
+        asyncio.run(run_cli(relay_urls, pc_id))
         return
 
-    app = ClipSyncApp(relay_url, pc_id)
+    app = ClipSyncApp(relay_urls, pc_id)
     app.mainloop()
 
 

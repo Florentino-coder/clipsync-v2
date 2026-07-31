@@ -125,9 +125,13 @@ def site_profiles_dir(base: Path | None = None) -> Path:
     Prefer the stable AppData install, then beside the app / PyInstaller extract /
     source tree.
     """
-    candidates: list[Path] = [stable_extension_dir() / "profiles"]
     root = Path(base) if base is not None else app_base_dir()
-    candidates.append(root / EXTENSION_DIRNAME / "profiles")
+    candidates: list[Path] = []
+    if base is not None:
+        candidates.append(root / EXTENSION_DIRNAME / "profiles")
+    candidates.append(stable_extension_dir() / "profiles")
+    if base is None:
+        candidates.append(root / EXTENSION_DIRNAME / "profiles")
     if getattr(sys, "frozen", False):
         meipass = getattr(sys, "_MEIPASS", None)
         if meipass:

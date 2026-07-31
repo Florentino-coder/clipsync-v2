@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../async_guard.dart';
 import '../clip_service.dart';
+import '../relay_failover.dart';
 import 'local_server.dart';
 import 'outbox.dart';
 import 'slip_ocr.dart';
@@ -49,12 +50,12 @@ class SlipBootstrap {
   SlipBootstrap({
     required this.targetId,
     required this.sharedSecret,
-    this.relayUrl = kRelayUrl,
+    this.relayUrls = kRelayUrls,
   });
 
   final String targetId;
   final String sharedSecret;
-  final String relayUrl;
+  final List<String> relayUrls;
 
   SlipStore? _store;
   LocalSlipServer? _localServer;
@@ -63,7 +64,9 @@ class SlipBootstrap {
   StreamSubscription<dynamic>? _pipelineSub;
   WebSocket? _relayWs;
   Timer? _relayRetryTimer;
+  late final RelaySelector _relaySelector = RelaySelector(relayUrls);
   int _relayRetryStep = 0;
+  bool _relayReconnectScheduled = false;
   bool _running = false;
 
   bool get isRunning => _running;
@@ -119,6 +122,9 @@ class SlipBootstrap {
     _running = false;
     _relayRetryTimer?.cancel();
     _relayRetryTimer = null;
+    _relayReconnectScheduled = false;
+    _relayRetryStep = 0;
+    _relaySelector.reset();
 
     final pipelineSub = _pipelineSub;
     _pipelineSub = null;
@@ -181,11 +187,13 @@ class SlipBootstrap {
     }
 
     _relayRetryTimer?.cancel();
+    _relayRetryTimer = null;
     await _relayWs?.close();
     _relayWs = null;
 
     try {
-      final ws = await WebSocket.connect(relayUrl).timeout(
+      final url = _relaySelector.current;
+      final ws = await WebSocket.connect(url).timeout(
         const Duration(seconds: 10),
       );
       if (!_running) {
@@ -197,6 +205,8 @@ class SlipBootstrap {
       }
       _relayWs = ws;
       _relayRetryStep = 0;
+      _relayReconnectScheduled = false;
+      onLog?.call('Slip relay connected $url');
       ws.add(jsonEncode({'action': 'subscribe', 'target': targetId}));
       onLog?.call('Slip relay subscribed ${fmtId(targetId)}');
 
@@ -212,28 +222,41 @@ class SlipBootstrap {
             // Ignore malformed relay frames.
           }
         },
-        onDone: () => _scheduleRelayReconnect(onLog: onLog),
-        onError: (_) => _scheduleRelayReconnect(onLog: onLog),
+        onDone: () => _handleRelayFailure(onLog: onLog),
+        onError: (_) => _handleRelayFailure(onLog: onLog),
         cancelOnError: true,
       );
 
       await _outbox?.onReconnect(forRelay: true);
     } catch (error) {
       onLog?.call('Slip relay connect error: $error');
-      _scheduleRelayReconnect(onLog: onLog);
+      _handleRelayFailure(onLog: onLog);
     }
+  }
+
+  void _handleRelayFailure({void Function(String message)? onLog}) {
+    if (!_running || _relayReconnectScheduled) {
+      return;
+    }
+    _relaySelector.failed();
+    _scheduleRelayReconnect(onLog: onLog);
   }
 
   void _scheduleRelayReconnect({void Function(String message)? onLog}) {
     if (!_running) {
       return;
     }
+    if (_relayReconnectScheduled) {
+      return;
+    }
+    _relayReconnectScheduled = true;
     _relayRetryTimer?.cancel();
     final delay = nextReconnectDelay(_relayRetryStep);
     if (_relayRetryStep < kReconnectSteps.length - 1) {
       _relayRetryStep += 1;
     }
     _relayRetryTimer = Timer(Duration(seconds: delay), () {
+      _relayReconnectScheduled = false;
       unawaited(_connectRelay(onLog: onLog));
     });
   }

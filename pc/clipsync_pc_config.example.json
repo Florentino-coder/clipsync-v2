@@ -1,3 +1,6 @@
 {
-  "relay_url": "wss://clipsync-relay.onrender.com"
+  "relay_urls": [
+    "wss://clipsync-relay-ko3c.onrender.com",
+    "wss://clipsync-relay.onrender.com"
+  ]
 }
