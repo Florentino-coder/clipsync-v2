@@ -41,7 +41,7 @@ def default_config() -> dict[str, Any]:
         "transport": {
             "preferred_mode": "auto",
         },
-        "relay_url": "wss://clipsync-relay-ko3c.onrender.com",
+        "relay_url": "wss://clipsync-relay.onrender.com",
         "auto_confirm": {
             "enabled": False,
             "min_ocr_confidence": 0.90,
