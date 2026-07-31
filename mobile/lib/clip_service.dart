@@ -22,7 +22,7 @@ const kRelayUrls = [
   'wss://clipsync-relay-ko3c.onrender.com',
   'wss://clipsync-relay.onrender.com',
 ];
-const kRelayUrl = kRelayUrls[0];
+const kRelayUrl = 'wss://clipsync-relay-ko3c.onrender.com';
 const kAppVersion = '0.9.15+42';
 
 /// SharedPreferences key for pairing v2 HMAC secret (see [slip_bootstrap.dart]).
