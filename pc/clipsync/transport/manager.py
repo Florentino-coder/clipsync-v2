@@ -8,7 +8,12 @@ from datetime import datetime
 from typing import Any, Awaitable, Callable, Optional, Protocol
 
 from clipsync.transport.relay import RelayTransport
-from clipsync.transport.usb import UsbTransport, _probe_phone, find_usb_tether_phone_ip
+from clipsync.transport.usb import (
+    NotSupportedError,
+    UsbTransport,
+    _probe_phone,
+    find_usb_tether_phone_ip,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +30,8 @@ class Transport(Protocol):
     async def start(self, on_slip_event: SlipEventCallback) -> None: ...
     async def fetch_slips(self, date_from: datetime, date_to: datetime) -> list[dict[str, Any]]: ...
     async def stop(self) -> None: ...
+
+    async def send_image_request(self, event_id: str) -> None: ...
 
 
 class TransportManager:
@@ -98,6 +105,14 @@ class TransportManager:
             raise RuntimeError("TransportManager is not started")
         return await self._transport.fetch_slips(date_from, date_to)
 
+    async def send_image_request(self, event_id: str) -> None:
+        if self._transport is None:
+            raise RuntimeError("TransportManager is not started")
+        send = getattr(self._transport, "send_image_request", None)
+        if not callable(send):
+            raise NotSupportedError("image requests are unavailable on this transport")
+        await send(event_id)
+
     async def _activate_initial_transport(self) -> None:
         if self._mode == "relay":
             await self._switch_to("relay")
@@ -110,11 +125,15 @@ class TransportManager:
             await self._switch_to("usb", phone_ip)
             return
 
+        await self._switch_to("relay")
+
+    async def notify_relay_failure(self) -> None:
+        """Use LAN only after the active Relay connection has failed."""
+        if self._transport is None or self._transport.name != "relay":
+            return
         phone_ip = self._find_usb_ip()
         if phone_ip:
             await self._switch_to("usb", phone_ip)
-        else:
-            await self._switch_to("relay")
 
     async def _switch_to(self, name: str, phone_ip: Optional[str] = None) -> None:
         old_name = self._transport.name if self._transport else None
@@ -163,6 +182,9 @@ class TransportManager:
             self._usb_fail_count += 1
             if self._usb_fail_count >= self._usb_fail_threshold:
                 await self._switch_to("relay")
+            return
+
+        if current == "relay":
             return
 
         phone_ip = self._find_usb_ip()

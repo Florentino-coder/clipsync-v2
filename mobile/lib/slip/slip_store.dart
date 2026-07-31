@@ -143,7 +143,8 @@ class SlipStore {
     final normalizedEnd = _dateOnly(end);
     final results = <StoredSlip>[];
 
-    for (final dayFile in await _dayFilesInRange(normalizedStart, normalizedEnd)) {
+    for (final dayFile
+        in await _dayFilesInRange(normalizedStart, normalizedEnd)) {
       for (final entry in await _readDayFile(dayFile)) {
         final captured = DateTime.parse(entry.capturedAt);
         final capturedDay = _dateOnly(captured);
@@ -169,6 +170,42 @@ class SlipStore {
     }
     results.sort((a, b) => a.capturedAt.compareTo(b.capturedAt));
     return results;
+  }
+
+  /// Remove only unsent queue entries older than [maxAge]. History remains
+  /// governed by the longer [retentionDays] policy.
+  Future<void> pruneUnsentOlderThan(Duration maxAge) async {
+    final cutoff = _now().subtract(maxAge);
+    await for (final dayFile in _allDayFiles()) {
+      final entries = await _readDayFile(dayFile);
+      final dropped = entries.where((entry) {
+        if (entry.sent) return false;
+        return DateTime.parse(entry.capturedAt).isBefore(cutoff);
+      }).toList();
+      if (dropped.isEmpty) continue;
+
+      final droppedIds = dropped.map((entry) => entry.eventId).toSet();
+      final kept = entries
+          .where((entry) => !droppedIds.contains(entry.eventId))
+          .toList();
+      await _deleteImagesForEntries(dropped);
+      if (kept.isEmpty) {
+        await dayFile.delete();
+      } else {
+        await _writeDayFile(dayFile, kept);
+      }
+    }
+  }
+
+  Future<StoredSlip?> findByEventId(String eventId) async {
+    await for (final dayFile in _allDayFiles()) {
+      for (final entry in await _readDayFile(dayFile)) {
+        if (entry.eventId == eventId) {
+          return entry;
+        }
+      }
+    }
+    return null;
   }
 
   Future<void> markSent(String eventId) async {

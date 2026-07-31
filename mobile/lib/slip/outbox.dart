@@ -38,12 +38,14 @@ class SlipOutbox {
     required SlipStore store,
     required SlipSendFn send,
     required this.sharedSecret,
+    this.maxPendingAge = const Duration(hours: 24),
   })  : _store = store,
         _send = send;
 
   final SlipStore _store;
   final SlipSendFn _send;
   final String sharedSecret;
+  final Duration? maxPendingAge;
 
   /// Persist [event] as unsent (if needed) and push over the injectable transport.
   ///
@@ -54,7 +56,17 @@ class SlipOutbox {
   }
 
   /// Handle inbound transport messages; `slip_ack` marks the event sent.
-  Future<void> handleIncoming(Map<String, dynamic> message) async {
+  Future<void> handleIncoming(
+    Map<String, dynamic> message, {
+    SlipSendFn? sendOverride,
+  }) async {
+    if (message['type'] == 'image_request') {
+      final eventId = message['event_id'];
+      if (eventId is String && eventId.isNotEmpty) {
+        await _sendRequestedImage(eventId, sendOverride: sendOverride);
+      }
+      return;
+    }
     if (message['type'] != 'slip_ack') {
       return;
     }
@@ -67,13 +79,18 @@ class SlipOutbox {
 
   /// Resend every unsent slip after transport reconnect.
   Future<void> onReconnect({bool forRelay = false}) async {
+    final pendingAge = maxPendingAge;
+    if (pendingAge != null) {
+      await _store.pruneUnsentOlderThan(pendingAge);
+    }
     final pending = await _store.unsent();
     for (final stored in pending) {
       await _send(_buildMessage(stored.toSlipEvent(), forRelay: forRelay));
     }
   }
 
-  Map<String, dynamic> _buildMessage(SlipEvent event, {required bool forRelay}) {
+  Map<String, dynamic> _buildMessage(SlipEvent event,
+      {required bool forRelay}) {
     final payload = event.toJson();
     final message = <String, dynamic>{
       'type': 'slip_event',
@@ -82,11 +99,28 @@ class SlipOutbox {
     if (forRelay) {
       message['sig'] = signSlipPayload(sharedSecret, payload);
     }
-    // Thumbnail is outside the signed OCR payload (keeps HMAC stable/small).
-    final thumb = makeThumbnailJpegBase64(event.localImagePath);
-    if (thumb != null && thumb.isNotEmpty) {
-      message['thumbnail_jpeg_b64'] = thumb;
-    }
     return message;
+  }
+
+  Future<void> _sendRequestedImage(
+    String eventId, {
+    SlipSendFn? sendOverride,
+  }) async {
+    final stored = await _store.findByEventId(eventId);
+    if (stored == null) {
+      return;
+    }
+    final imageB64 = makeThumbnailJpegBase64(stored.imagePath);
+    if (imageB64 == null || imageB64.isEmpty) {
+      return;
+    }
+    final bytes = base64Decode(imageB64);
+    final send = sendOverride ?? _send;
+    await send({
+      'type': 'image_response',
+      'event_id': eventId,
+      'image_jpeg_b64': imageB64,
+      'sha256': sha256.convert(bytes).toString(),
+    });
   }
 }

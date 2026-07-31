@@ -87,7 +87,7 @@ class SlipBootstrap {
     _outbox = SlipOutbox(
       store: _store!,
       sharedSecret: sharedSecret,
-      send: _sendRelaySlipEvent,
+      send: _sendRelayMessage,
     );
 
     _localServer = LocalSlipServer(
@@ -161,24 +161,20 @@ class SlipBootstrap {
     _store = null;
   }
 
-  Future<void> _sendRelaySlipEvent(Map<String, dynamic> message) async {
+  Future<void> _sendRelayMessage(Map<String, dynamic> message) async {
     final ws = _relayWs;
     if (ws == null) {
       return;
     }
-    if (message['type'] != 'slip_event') {
+    final type = message['type'];
+    if (type != 'slip_event' && type != 'image_response') {
       return;
     }
-    ws.add(
-      jsonEncode({
-        'action': 'slip_event',
-        'payload': message['payload'],
-        'sig': message['sig'],
-        if (message['thumbnail_jpeg_b64'] is String &&
-            (message['thumbnail_jpeg_b64'] as String).isNotEmpty)
-          'thumbnail_jpeg_b64': message['thumbnail_jpeg_b64'],
-      }),
-    );
+    final outgoing = <String, dynamic>{
+      'action': type,
+      ...message,
+    }..remove('type');
+    ws.add(jsonEncode(outgoing));
   }
 
   Future<void> _connectRelay({void Function(String message)? onLog}) async {
@@ -215,8 +211,12 @@ class SlipBootstrap {
           try {
             final msg = jsonDecode(data as String) as Map<String, dynamic>;
             final type = msg['type'] as String? ?? '';
-            if (type == 'slip_ack') {
+            if (type == 'slip_ack' || type == 'image_request') {
               await _outbox?.handleIncoming(msg);
+            } else if (type == 'pc_online') {
+              // The phone WS can stay connected while the PC reconnects.
+              // Re-drive the durable queue when Relay announces PC online.
+              await _outbox?.onReconnect(forRelay: true);
             }
           } catch (_) {
             // Ignore malformed relay frames.

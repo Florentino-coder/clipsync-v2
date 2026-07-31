@@ -53,7 +53,10 @@ void main() {
 
   setUp(() async {
     tempDir = await Directory.systemTemp.createTemp('local_server_test_');
-    store = SlipStore(slipsDir: Directory('${tempDir.path}/slips'));
+    store = SlipStore(
+      slipsDir: Directory('${tempDir.path}/slips'),
+      now: () => DateTime.parse('2026-07-23T00:00:00+07:00'),
+    );
     await store.init();
     server = LocalSlipServer(store, _sharedSecret);
     await server.start(port: 0);
@@ -107,8 +110,7 @@ void main() {
 
   test('GET /slips with valid auth returns slips with compressed base64 images',
       () async {
-    final imageFile =
-        await _createTestImage('${tempDir.path}/slip-evt-1.png');
+    final imageFile = await _createTestImage('${tempDir.path}/slip-evt-1.png');
     await store.save(_sampleEvent(
       eventId: 'evt-1',
       capturedAt: '2026-07-22T10:00:00+07:00',
@@ -142,11 +144,11 @@ void main() {
 
   test('GET /slips truncates to 50 images when more are stored', () async {
     for (var i = 0; i < 55; i++) {
-      final imageFile =
-          await _createTestImage('${tempDir.path}/slip-$i.png');
+      final imageFile = await _createTestImage('${tempDir.path}/slip-$i.png');
       await store.save(_sampleEvent(
         eventId: 'evt-$i',
-        capturedAt: '2026-07-22T${(10 + (i % 10)).toString().padLeft(2, '0')}:00:00+07:00',
+        capturedAt:
+            '2026-07-22T${(10 + (i % 10)).toString().padLeft(2, '0')}:00:00+07:00',
         imagePath: imageFile.path,
       ));
     }
@@ -208,8 +210,7 @@ void main() {
   });
 
   test('WebSocket slip_ack is forwarded to outbox.handleIncoming', () async {
-    final imageFile =
-        await _createTestImage('${tempDir.path}/slip-ack.png');
+    final imageFile = await _createTestImage('${tempDir.path}/slip-ack.png');
     final event = _sampleEvent(
       eventId: 'evt-ack',
       capturedAt: '2026-07-22T15:00:00+07:00',
@@ -292,6 +293,60 @@ void main() {
     expect(sent, isNotEmpty);
     expect(sent.first['type'], 'slip_event');
     expect(sent.first['payload']['event_id'], 'evt-reconnect');
+
+    await channel.sink.close();
+  });
+
+  test('WebSocket image_request returns only the requested image', () async {
+    final imageFile =
+        await _createTestImage('${tempDir.path}/slip-image-request.png');
+    final event = _sampleEvent(
+      eventId: 'evt-image-request',
+      capturedAt: '2026-07-22T17:00:00+07:00',
+      imagePath: imageFile.path,
+    );
+    await store.save(event, sent: true);
+
+    final outbox = SlipOutbox(
+      store: store,
+      sharedSecret: _sharedSecret,
+      send: (_) async {},
+    );
+    await server.stop();
+    server = LocalSlipServer(store, _sharedSecret, outbox: outbox);
+    await server.start(port: 0);
+    port = server.port;
+
+    final channel = WebSocketChannel.connect(
+      Uri.parse('ws://127.0.0.1:$port/'),
+    );
+    final messages = channel.stream.asBroadcastStream();
+    channel.sink.add(jsonEncode({
+      'type': 'auth',
+      'token': _authHeader(_sharedSecret),
+    }));
+    await expectLater(
+      messages.first,
+      completion(jsonEncode({'type': 'auth_ok'})),
+    );
+
+    channel.sink.add(jsonEncode({
+      'type': 'image_request',
+      'event_id': 'evt-image-request',
+    }));
+
+    final response = await messages.firstWhere((message) {
+      final decoded = jsonDecode(message as String) as Map<String, dynamic>;
+      return decoded['type'] == 'image_response';
+    }).timeout(
+      const Duration(seconds: 2),
+    );
+    final decoded = jsonDecode(response as String) as Map<String, dynamic>;
+    expect(decoded['type'], 'image_response');
+    expect(decoded['event_id'], 'evt-image-request');
+    expect(decoded['image_jpeg_b64'], isNotEmpty);
+    expect(decoded['sha256'], isNotEmpty);
+    expect(decoded['payload'], isNull);
 
     await channel.sink.close();
   });

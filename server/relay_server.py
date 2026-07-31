@@ -22,6 +22,8 @@ PORT = int(os.getenv("PORT", "8765"))
 CONNECTION_TIMEOUT_SECONDS = int(os.getenv("CONNECTION_TIMEOUT_SECONDS", "1800"))
 CLEANUP_INTERVAL_SECONDS = int(os.getenv("CLEANUP_INTERVAL_SECONDS", "60"))
 MAX_MESSAGE_BYTES = 200 * 1024
+PENDING_SLIP_TTL_SECONDS = 24 * 60 * 60
+MAX_PENDING_SLIPS_PER_PC = 1000
 
 _SERVER_DIR = Path(__file__).resolve().parent
 REVOKED_DEVICES_PATH = Path(
@@ -57,6 +59,12 @@ phones: dict[str, set[Ws]] = defaultdict(set)
 # WebSocket -> connection metadata
 connections: dict[Ws, dict[str, Any]] = {}
 
+# PC id -> [(queued_at_monotonic, forwarded_message)].
+# Relay restart still loses this in-memory queue; phone outbox resends after
+# reconnect. The queue covers the common case where PC drops while phone stays
+# connected to Relay.
+pending_slips: dict[str, list[tuple[float, dict[str, Any]]]] = defaultdict(list)
+
 
 def clean(raw: str) -> str | None:
     """Return a normalized 9-digit ID, or None when invalid."""
@@ -68,12 +76,53 @@ def fmt(d: str) -> str:
     return f"{d[:3]}-{d[3:6]}-{d[6:]}"
 
 
-async def send(ws: Ws, data: dict[str, Any]) -> None:
+async def send(ws: Ws, data: dict[str, Any]) -> bool:
     try:
         if not ws.closed:
             await ws.send_str(json.dumps(data, ensure_ascii=False))
+            return True
     except Exception:
-        pass
+        return False
+    return False
+
+
+def _prune_pending_slips(pid: str) -> list[tuple[float, dict[str, Any]]]:
+    now = time.monotonic()
+    kept = [
+        item
+        for item in pending_slips.get(pid, [])
+        if now - item[0] <= PENDING_SLIP_TTL_SECONDS
+    ]
+    if kept:
+        pending_slips[pid] = kept
+    else:
+        pending_slips.pop(pid, None)
+    return kept
+
+
+def _queue_pending_slip(pid: str, forward: dict[str, Any]) -> None:
+    queued = _prune_pending_slips(pid)
+    event_id = (forward.get("payload") or {}).get("event_id")
+    if isinstance(event_id, str) and any(
+        (item[1].get("payload") or {}).get("event_id") == event_id
+        for item in queued
+    ):
+        return
+    queued.append((time.monotonic(), forward))
+    pending_slips[pid] = queued[-MAX_PENDING_SLIPS_PER_PC:]
+
+
+async def _flush_pending_slips(pid: str, ws: Ws) -> None:
+    queued = _prune_pending_slips(pid)
+    while queued:
+        _queued_at, forward = queued[0]
+        if not await send(ws, forward):
+            break
+        queued.pop(0)
+    if queued:
+        pending_slips[pid] = queued
+    else:
+        pending_slips.pop(pid, None)
 
 
 def touch(ws: Ws) -> None:
@@ -171,6 +220,7 @@ async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
                         "phones": len(phones.get(pid, set())),
                     },
                 )
+                await _flush_pending_slips(pid, ws)
 
                 for ph in list(phones.get(pid, set())):
                     await send(ph, {"type": "pc_online"})
@@ -225,9 +275,6 @@ async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
                     continue
 
                 pc = pcs.get(sub_id)
-                if pc is None:
-                    continue
-
                 forward = {
                     "type": "slip_event",
                     "payload": msg.get("payload"),
@@ -237,7 +284,10 @@ async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
                 if isinstance(thumb, str) and thumb:
                     forward["thumbnail_jpeg_b64"] = thumb
 
-                await send(pc, forward)
+                if pc is None or not await send(pc, forward):
+                    _queue_pending_slip(sub_id, forward)
+                    log.info("SLIP  queued -> %s  pending=%s", fmt(sub_id), len(pending_slips[sub_id]))
+                    continue
 
                 log.info("SLIP  phone -> %s", fmt(sub_id))
 
@@ -261,6 +311,48 @@ async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
                         dead.add(ph)
                 phones[peer_id] -= dead
                 log.info("ACK   %s -> phone(s)", fmt(peer_id))
+
+            # PC -> phone image request (image is never part of normal slip_event).
+            elif action == "image_request":
+                if not peer_id:
+                    continue
+                event_id = msg.get("event_id")
+                if not event_id or not isinstance(event_id, str):
+                    continue
+                payload = json.dumps(
+                    {"type": "image_request", "event_id": event_id},
+                    ensure_ascii=False,
+                )
+                for ph in list(phones.get(peer_id, set())):
+                    with contextlib.suppress(Exception):
+                        await ph.send_str(payload)
+
+            # Phone -> PC image response, after PC requested a specific event.
+            elif action == "image_response":
+                if not sub_id:
+                    continue
+                pc = pcs.get(sub_id)
+                event_id = msg.get("event_id")
+                image_b64 = msg.get("image_jpeg_b64")
+                sha256 = msg.get("sha256", "")
+                if (
+                    pc is None
+                    or not isinstance(event_id, str)
+                    or not event_id
+                    or not isinstance(image_b64, str)
+                    or not image_b64
+                    or not isinstance(sha256, str)
+                ):
+                    continue
+                await send(
+                    pc,
+                    {
+                        "type": "image_response",
+                        "event_id": event_id,
+                        "image_jpeg_b64": image_b64,
+                        "sha256": sha256,
+                    },
+                )
 
             # PC clipboard update
             elif action == "clip":

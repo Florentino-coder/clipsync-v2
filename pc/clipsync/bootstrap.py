@@ -119,9 +119,16 @@ class SlipBootstrap:
 
         self._manager = TransportManager(
             self._shared_secret,
-            mode=(cfg.get("transport") or {}).get("preferred_mode", "auto"),
+            mode=(cfg.get("transport") or {}).get("preferred_mode", "relay"),
             on_transport_changed=self._on_transport_changed,
         )
+
+        set_relay_failure = getattr(self._client, "set_relay_failure_handler", None)
+        if callable(set_relay_failure):
+            set_relay_failure(self._notify_relay_failure)
+        set_image_request = getattr(self._client, "set_image_request_handler", None)
+        if callable(set_image_request):
+            set_image_request(self._send_image_request)
 
         async def send_ack(event_id: str) -> None:
             transport = self._manager.transport if self._manager else None
@@ -137,6 +144,12 @@ class SlipBootstrap:
         self._orchestrator.set_send_ack(send_ack)
 
         async def on_slip_event(payload: dict[str, Any]) -> None:
+            if payload.get("type") == "image_response":
+                event_id = str(payload.get("event_id") or "")
+                image_b64 = payload.get("image_jpeg_b64")
+                if event_id and isinstance(image_b64, str) and image_b64:
+                    self._push_ui_image(event_id, image_b64)
+                return
             if self._orchestrator is None:
                 return
             source = "usb"
@@ -178,6 +191,9 @@ class SlipBootstrap:
         clear_handler = getattr(self._client, "set_slip_message_handler", None)
         if callable(clear_handler):
             clear_handler(None)
+        clear_image_request = getattr(self._client, "set_image_request_handler", None)
+        if callable(clear_image_request):
+            clear_image_request(None)
         if self._manager is not None:
             await self._manager.stop()
             self._manager = None
@@ -189,6 +205,12 @@ class SlipBootstrap:
     def _make_relay_handler(self) -> SlipRelayHandler:
         async def _handle(msg: dict[str, Any]) -> None:
             if self._orchestrator is None:
+                return
+            if msg.get("type") == "image_response":
+                event_id = str(msg.get("event_id") or "")
+                image_b64 = msg.get("image_jpeg_b64")
+                if event_id and isinstance(image_b64, str) and image_b64:
+                    self._push_ui_image(event_id, image_b64)
                 return
             payload = msg.get("payload")
             if not isinstance(payload, dict):
@@ -205,6 +227,36 @@ class SlipBootstrap:
             self._push_ui_event(payload, result, thumbnail_jpeg_b64=thumb_s)
 
         return _handle
+
+    def _notify_relay_failure(self) -> None:
+        manager = self._manager
+        loop = self._loop
+        if manager is None or loop is None or not loop.is_running():
+            return
+        asyncio.run_coroutine_threadsafe(manager.notify_relay_failure(), loop)
+
+    async def _send_image_request(self, event_id: str) -> None:
+        manager = self._manager
+        transport = manager.transport if manager else None
+        if isinstance(transport, UsbTransport) and self._loop is not None:
+            future = asyncio.run_coroutine_threadsafe(
+                transport.send_image_request(event_id), self._loop
+            )
+            await asyncio.wrap_future(future)
+            return
+        send = getattr(self._client, "send_image_request", None)
+        if send is not None:
+            result = send(event_id)
+            if asyncio.iscoroutine(result):
+                await result
+
+    def _push_ui_image(self, event_id: str, image_b64: str) -> None:
+        def _update() -> None:
+            updater = getattr(self._app, "update_slip_image", None)
+            if callable(updater):
+                updater(event_id, image_b64)
+
+        self._app.after(0, _update)
 
     def _on_pending_orders(self, data: dict[str, Any]) -> None:
         if self._orchestrator is not None:

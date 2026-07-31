@@ -39,7 +39,7 @@ def default_config() -> dict[str, Any]:
     data_dir = user_data_dir()
     return {
         "transport": {
-            "preferred_mode": "auto",
+            "preferred_mode": "relay",
         },
         "relay_url": "wss://clipsync-relay-ko3c.onrender.com",
         "relay_urls": [

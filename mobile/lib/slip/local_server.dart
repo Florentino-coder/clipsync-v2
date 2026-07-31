@@ -53,10 +53,8 @@ class LocalSlipServer {
   }
 
   Future<void> start({int port = defaultPort}) async {
-    final handler = Cascade()
-        .add(_webSocketHandler())
-        .add(_httpHandler)
-        .handler;
+    final handler =
+        Cascade().add(_webSocketHandler()).add(_httpHandler).handler;
 
     _server = await shelf_io.serve(
       handler,
@@ -119,9 +117,19 @@ class LocalSlipServer {
           try {
             final decoded = jsonDecode(message as String);
             if (decoded is Map<String, dynamic>) {
-              await outbox.handleIncoming(decoded);
+              await outbox.handleIncoming(
+                decoded,
+                sendOverride: (outbound) async {
+                  webSocket.sink.add(jsonEncode(outbound));
+                },
+              );
             } else if (decoded is Map) {
-              await outbox.handleIncoming(Map<String, dynamic>.from(decoded));
+              await outbox.handleIncoming(
+                Map<String, dynamic>.from(decoded),
+                sendOverride: (outbound) async {
+                  webSocket.sink.add(jsonEncode(outbound));
+                },
+              );
             }
           } catch (_) {
             // Ignore malformed inbound frames.
@@ -162,8 +170,8 @@ class LocalSlipServer {
 
       final from = DateTime.parse(fromParam);
       final to = DateTime.parse(toParam);
-      final items = (await store.byDateRange(from, to))
-          .take(maxImagesPerRequest);
+      final items =
+          (await store.byDateRange(from, to)).take(maxImagesPerRequest);
 
       final out = <Map<String, dynamic>>[];
       for (final slip in items) {

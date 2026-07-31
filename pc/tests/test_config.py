@@ -55,7 +55,7 @@ def test_partial_file_merges_defaults(tmp_path: Path):
     assert cfg["auto_confirm"]["min_ocr_confidence"] == 0.90
     assert cfg["auto_confirm"]["require_manual_review"]["enabled"] is True
     assert cfg["auto_confirm"]["require_manual_review"]["amount_threshold"] == 5000.0
-    assert cfg["transport"]["preferred_mode"] == "auto"
+    assert cfg["transport"]["preferred_mode"] == "relay"
     assert cfg["matching"]["require_account_last4_match"] is True
     assert cfg["matching"]["prevent_duplicate_ref_number"] is True
     assert cfg["chrome_bridge"]["ws_port"] == 8765

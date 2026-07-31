@@ -54,7 +54,7 @@ def test_apply_form_values_updates_config_copy():
     assert updated["transport"]["preferred_mode"] == "relay"
     # original untouched
     assert cfg["auto_confirm"]["enabled"] is False
-    assert cfg["transport"]["preferred_mode"] == "auto"
+    assert cfg["transport"]["preferred_mode"] == "relay"
 
 
 def test_apply_form_values_rejects_bad_mode():

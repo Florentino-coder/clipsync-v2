@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import ipaddress
 import json
 import logging
@@ -32,11 +33,8 @@ def _list_candidates() -> list[tuple[str, str, str]]:
         if not stats.get(name) or not stats[name].isup:
             continue
         for addr in addrs:
-            if addr.family == socket.AF_INET and not addr.address.startswith("169.254"):
-                if any(h in name.lower() for h in TETHER_NIC_HINTS) or addr.address.startswith(
-                    "192.168.42."
-                ):
-                    out.append((name, addr.address, addr.netmask or "255.255.255.0"))
+            if addr.family == socket.AF_INET and not addr.address.startswith(("169.254", "127.")):
+                out.append((name, addr.address, addr.netmask or "255.255.255.0"))
     return out
 
 
@@ -49,9 +47,29 @@ def _probe_phone(ip: str, port: int = DEFAULT_PORT, timeout: float = 1.5) -> boo
 
 
 def find_usb_tether_phone_ip() -> str | None:
-    for _name, addr, mask in _list_candidates():
+    for name, addr, mask in _list_candidates():
         net = ipaddress.ip_network(f"{addr}/{mask}", strict=False)
-        for cand in (str(net.network_address + 1), str(net.network_address + 129)):
+        is_tether = any(h in name.lower() for h in TETHER_NIC_HINTS) or addr.startswith(
+            "192.168.42."
+        )
+        if is_tether:
+            candidates = [str(net.network_address + 1), str(net.network_address + 129)]
+        elif net.num_addresses <= 256:
+            # Notebook Wi-Fi hotspots commonly use 192.168.137.0/24, with
+            # the phone at an arbitrary host address rather than .1/.129.
+            candidates = [str(host) for host in net.hosts() if str(host) != addr]
+        else:
+            candidates = []
+
+        if not is_tether and candidates:
+            with ThreadPoolExecutor(max_workers=min(32, len(candidates))) as pool:
+                results = list(pool.map(_probe_phone, candidates))
+            for cand, found in zip(candidates, results):
+                if found:
+                    return cand
+            continue
+
+        for cand in candidates:
             if cand != addr and _probe_phone(cand):
                 return cand
     return None
@@ -111,6 +129,12 @@ class UsbTransport:
                     data = json.loads(message)
                 except json.JSONDecodeError:
                     continue
+                if data.get("type") == "image_response":
+                    if self._on_slip_event is not None:
+                        result = self._on_slip_event(data)
+                        if asyncio.iscoroutine(result):
+                            await result
+                    continue
                 if data.get("type") != "slip_event":
                     continue
                 payload = data.get("payload")
@@ -132,6 +156,12 @@ class UsbTransport:
         if not event_id or self._ws is None:
             return
         await self._ws.send(json.dumps({"type": "slip_ack", "event_id": event_id}))
+
+    async def send_image_request(self, event_id: str) -> None:
+        """Ask the phone for one image, without sending any other images."""
+        if not event_id or self._ws is None:
+            return
+        await self._ws.send(json.dumps({"type": "image_request", "event_id": event_id}))
 
     async def fetch_slips(self, date_from: datetime, date_to: datetime) -> list[dict[str, Any]]:
         url = f"http://{self._phone_ip}:{self._port}/slips"

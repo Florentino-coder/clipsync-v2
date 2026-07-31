@@ -30,6 +30,7 @@ class MockTransport:
         self.phone_ip = phone_ip
         self.started = False
         self.stopped = False
+        self.sent_image_requests: list[str] = []
         self.on_slip_event = None
         MockTransport.instances.append(self)
 
@@ -44,6 +45,9 @@ class MockTransport:
 
     async def stop(self):
         self.stopped = True
+
+    async def send_image_request(self, event_id: str):
+        self.sent_image_requests.append(event_id)
 
 
 def test_finds_gateway_of_tether_nic():
@@ -79,6 +83,18 @@ def test_tries_dot_129_when_dot_1_fails():
             ]
 
 
+def test_finds_phone_on_notebook_wifi_hotspot_subnet():
+    with patch(
+        "clipsync.transport.usb._list_candidates",
+        return_value=[("Wi-Fi", "192.168.137.1", "255.255.255.0")],
+    ):
+        with patch(
+            "clipsync.transport.usb._probe_phone",
+            side_effect=lambda ip: ip == "192.168.137.2",
+        ):
+            assert find_usb_tether_phone_ip() == "192.168.137.2"
+
+
 def test_auth_token_matches_mobile_scheme():
     import hashlib
     import hmac
@@ -92,7 +108,7 @@ def test_auth_token_matches_mobile_scheme():
 
 
 @pytest.mark.asyncio
-async def test_auto_mode_selects_usb_when_available():
+async def test_auto_mode_starts_relay_even_when_usb_is_available():
     MockTransport.instances.clear()
 
     mgr = TransportManager(
@@ -104,8 +120,8 @@ async def test_auto_mode_selects_usb_when_available():
     )
     await mgr.start(lambda _event: None)
 
-    assert mgr.transport_name == "usb"
-    assert MockTransport.instances[0].name == "usb"
+    assert mgr.transport_name == "relay"
+    assert MockTransport.instances[0].name == "relay"
     assert MockTransport.instances[0].started is True
 
     await mgr.stop()
@@ -131,7 +147,26 @@ async def test_auto_mode_selects_relay_without_usb():
 
 
 @pytest.mark.asyncio
-async def test_on_transport_changed_when_usb_lost():
+async def test_relay_failure_switches_to_usb_fallback():
+    MockTransport.instances.clear()
+
+    mgr = TransportManager(
+        SECRET,
+        find_usb_ip=lambda: "192.168.187.1",
+        sleep=blocked_sleep,
+        usb_transport_factory=lambda ip: MockTransport("usb", phone_ip=ip),
+        relay_transport_factory=lambda: MockTransport("relay"),
+    )
+    await mgr.start(lambda _event: None)
+    await mgr.notify_relay_failure()
+
+    assert mgr.transport_name == "usb"
+    assert mgr.transport.phone_ip == "192.168.187.1"
+    await mgr.stop()
+
+
+@pytest.mark.asyncio
+async def test_relay_stays_primary_when_usb_appears_or_disappears():
     MockTransport.instances.clear()
     usb_up = {"value": True}
     changes: list[tuple[str | None, str]] = []
@@ -147,20 +182,20 @@ async def test_on_transport_changed_when_usb_lost():
         relay_transport_factory=lambda: MockTransport("relay"),
     )
     await mgr.start(lambda _event: None)
-    assert mgr.transport_name == "usb"
+    assert mgr.transport_name == "relay"
 
     usb_up["value"] = False
     for _ in range(3):
         await mgr._evaluate_transport()
 
     assert mgr.transport_name == "relay"
-    assert ("usb", "relay") in changes
+    assert changes == [(None, "relay")]
 
     await mgr.stop()
 
 
 @pytest.mark.asyncio
-async def test_usb_returns_switches_back_from_relay():
+async def test_usb_does_not_preempt_relay_without_failure():
     MockTransport.instances.clear()
     usb_available = {"value": False}
     changes: list[tuple[str | None, str]] = []
@@ -181,8 +216,8 @@ async def test_usb_returns_switches_back_from_relay():
     usb_available["value"] = True
     await mgr._evaluate_transport()
 
-    assert mgr.transport_name == "usb"
-    assert ("relay", "usb") in changes
+    assert mgr.transport_name == "relay"
+    assert changes == [(None, "relay")]
 
     await mgr.stop()
 
@@ -249,3 +284,35 @@ async def test_usb_send_ack_emits_slip_ack_frame():
 
     assert len(sent) == 1
     assert json.loads(sent[0]) == {"type": "slip_ack", "event_id": "evt-ack-1"}
+
+
+@pytest.mark.asyncio
+async def test_usb_image_request_emits_request_frame():
+    transport = UsbTransport("192.168.187.1", SECRET, probe_phone=lambda _ip: True)
+    sent: list[str] = []
+
+    class _FakeWs:
+        async def send(self, data: str) -> None:
+            sent.append(data)
+
+    transport._ws = _FakeWs()  # noqa: SLF001
+    await transport.send_image_request("evt-image-1")
+
+    assert json.loads(sent[0]) == {"type": "image_request", "event_id": "evt-image-1"}
+
+
+@pytest.mark.asyncio
+async def test_manager_forwards_image_request_to_active_usb():
+    transport = MockTransport("usb", phone_ip="192.168.187.1")
+    mgr = TransportManager(
+        SECRET,
+        mode="usb",
+        find_usb_ip=lambda: "192.168.187.1",
+        usb_transport_factory=lambda _ip: transport,
+    )
+    await mgr.start(lambda _event: None)
+
+    await mgr.send_image_request("evt-image-2")
+
+    assert transport.sent_image_requests == ["evt-image-2"]
+    await mgr.stop()

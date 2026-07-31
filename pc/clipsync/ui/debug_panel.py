@@ -347,6 +347,19 @@ class DebugPanel:
             return None
         return self._rows.get(sel[0])
 
+    def update_slip_image(self, event_id: str, image_b64: str) -> None:
+        row = self._rows.get(str(event_id))
+        if row is None:
+            return
+        merged = merge_slip_event(
+            row.raw,
+            {"event_id": str(event_id), "thumbnail_jpeg_b64": image_b64},
+        )
+        updated = format_slip_row(merged)
+        self._rows[str(event_id)] = updated
+        if self.tree.exists(str(event_id)):
+            self.tree.item(str(event_id), values=updated.values, tags=(updated.tag,))
+
     def _view_selected(self) -> None:
         row = self._selected_row()
         if row is None:

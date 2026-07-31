@@ -50,7 +50,10 @@ void main() {
 
   setUp(() async {
     tempDir = await Directory.systemTemp.createTemp('outbox_test_');
-    store = SlipStore(slipsDir: Directory('${tempDir.path}/slips'));
+    store = SlipStore(
+      slipsDir: Directory('${tempDir.path}/slips'),
+      now: () => DateTime.parse('2026-07-23T00:00:00+07:00'),
+    );
     await store.init();
     sent = [];
     outbox = SlipOutbox(
@@ -125,7 +128,7 @@ void main() {
     expect(signSlipPayload(_secret, payload), _expectedSig(payload));
   });
 
-  test('relay message may include thumbnail outside signed payload', () async {
+  test('relay message omits thumbnail until explicitly requested', () async {
     final big = img.Image(width: 200, height: 300);
     img.fill(big, color: img.ColorRgb8(10, 20, 30));
     final path = '${tempDir.path}/slip.png';
@@ -150,8 +153,61 @@ void main() {
     final payload = Map<String, dynamic>.from(message['payload'] as Map);
     expect(payload.containsKey('thumbnail_jpeg_b64'), isFalse);
     expect(message['sig'], _expectedSig(payload));
-    expect(message['thumbnail_jpeg_b64'], isA<String>());
-    expect((message['thumbnail_jpeg_b64'] as String).isNotEmpty, isTrue);
+    expect(message.containsKey('thumbnail_jpeg_b64'), isFalse);
+  });
+
+  test('reconnect drops unsent events older than 24 hours', () async {
+    await outbox.enqueue(_sampleEvent(
+      eventId: 'evt-expired',
+      capturedAt: '2026-07-21T23:00:00+07:00',
+    ));
+    sent.clear();
+
+    await outbox.onReconnect();
+
+    expect(sent, isEmpty);
+    expect(await store.unsent(), isEmpty);
+  });
+
+  test('image request sends only the requested event image', () async {
+    final big = img.Image(width: 200, height: 300);
+    img.fill(big, color: img.ColorRgb8(10, 20, 30));
+    final path = '${tempDir.path}/requested.png';
+    await File(path).writeAsBytes(img.encodePng(big));
+    final event = _sampleEvent(
+      eventId: 'evt-requested',
+      capturedAt: '2026-07-22T12:00:00+07:00',
+    );
+    final storedEvent = SlipEvent(
+      eventId: event.eventId,
+      capturedAt: event.capturedAt,
+      bank: event.bank,
+      amount: event.amount,
+      senderName: event.senderName,
+      receiverAccountLast4: event.receiverAccountLast4,
+      senderAccountLast4: event.senderAccountLast4,
+      receiverAccountMasked: event.receiverAccountMasked,
+      senderAccountMasked: event.senderAccountMasked,
+      receiverBank: event.receiverBank,
+      refNumber: event.refNumber,
+      ocrConfidence: event.ocrConfidence,
+      parseFailed: event.parseFailed,
+      accountParseConfidence: event.accountParseConfidence,
+      localImagePath: path,
+    );
+    await outbox.enqueue(storedEvent);
+    sent.clear();
+
+    await outbox.handleIncoming({
+      'type': 'image_request',
+      'event_id': 'evt-requested',
+    });
+
+    expect(sent, hasLength(1));
+    expect(sent.single['type'], 'image_response');
+    expect(sent.single['event_id'], 'evt-requested');
+    expect(sent.single['image_jpeg_b64'], isA<String>());
+    expect(sent.single['sha256'], isA<String>());
   });
 
   test('ack for unknown event_id is ignored', () async {

@@ -297,6 +297,8 @@ class ClipSyncClient:
         self.generation = 0
         self.reconnect_step = 0
         self._slip_message_handler: Callable[[dict[str, Any]], Awaitable[None]] | None = None
+        self._relay_failure_handler: Callable[[], None] | None = None
+        self._image_request_handler: Callable[[str], Awaitable[None]] | None = None
 
     @property
     def current_relay_url(self) -> str:
@@ -307,10 +309,37 @@ class ClipSyncClient:
     ) -> None:
         self._slip_message_handler = handler
 
+    def set_relay_failure_handler(self, handler: Callable[[], None] | None) -> None:
+        self._relay_failure_handler = handler
+
+    def set_image_request_handler(
+        self, handler: Callable[[str], Awaitable[None]] | None
+    ) -> None:
+        self._image_request_handler = handler
+
     async def send_slip_ack(self, event_id: str) -> None:
         if not self.ws or not event_id:
             return
         await self.ws.send(json.dumps({"action": "slip_ack", "event_id": event_id}))
+
+    async def send_image_request(self, event_id: str) -> None:
+        if not self.ws or not event_id:
+            return
+        await self.ws.send(json.dumps({"action": "image_request", "event_id": event_id}))
+
+    def schedule_image_request(self, event_id: str) -> None:
+        if not self.loop or not event_id:
+            return
+        try:
+            handler = self._image_request_handler
+            if self.ws is None and handler is None:
+                return
+            request = handler(event_id) if handler is not None else self.send_image_request(event_id)
+            asyncio.run_coroutine_threadsafe(
+                request, self.loop
+            )
+        except Exception:
+            pass
 
     async def send_withdraw_notify(self, payload: dict[str, Any]) -> None:
         """Send typed withdraw_notify to relay (PC → phones)."""
@@ -406,6 +435,8 @@ class ClipSyncClient:
             except Exception as exc:
                 if self._is_current(generation):
                     self.on_event("disconnected", {"message": str(exc), "url": url})
+                    if self._relay_failure_handler is not None:
+                        self._relay_failure_handler()
             finally:
                 self.ws = None
 
@@ -447,7 +478,7 @@ class ClipSyncClient:
             return
         elif msg_type == "kicked":
             self.on_event("kicked", {})
-        elif msg_type == "slip_event":
+        elif msg_type in {"slip_event", "image_response"}:
             handler = self._slip_message_handler
             if handler is not None and self.loop is not None:
                 asyncio.run_coroutine_threadsafe(self._dispatch_slip(msg), self.loop)
@@ -954,11 +985,23 @@ class ClipSyncApp(tk.Tk if tk is not None else object):  # type: ignore[misc]
                     f"มี thumbnail แต่เปิดไม่ได้: {exc}",
                 )
                 return
+        request = getattr(self.client, "schedule_image_request", None)
+        if callable(request) and event_id != "-":
+            request(str(event_id))
+            messagebox.showinfo(
+                "ดูรูปสลิป",
+                f"กำลังขอรูปสลิป event {event_id}\nกดดูอีกครั้งเมื่อรูปมาถึง",
+            )
+            return
         messagebox.showinfo(
             "ดูรูปสลิป",
             f"ยังไม่มีรูปสำหรับ event {event_id}\n"
             "(รอสลิปใหม่หลังอัปเดตแอป หรือเชื่อม USB + slip_fetcher)",
         )
+
+    def update_slip_image(self, event_id: str, image_b64: str) -> None:
+        if self.debug_panel is not None:
+            self.debug_panel.update_slip_image(event_id, image_b64)
 
     def _on_slip_manual_confirm(self, event: Mapping[str, Any]) -> None:
         from clipsync.matcher import is_reliable_order_id
